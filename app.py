@@ -155,8 +155,10 @@ if st.sidebar.button("🔍 다중 시계열 정밀 분석"):
             # [시계열 2] 작년 동기간 데이터 분석
             ly_start = start_date.replace(year=start_date.year - 1)
             ly_end = end_date.replace(year=end_date.year - 1)
-            _, _, _, last_stats = get_ndvi_for_period(
-                region, str(ly_start), str(ly_end), cloud_threshold + 10 # 작년은 매칭 확률을 위해 구름 버퍼 완화
+            
+            # 💡 수정포인트 1: 밑줄(_)로 버리던 작년 식생지수 맵을 'last_ndvi'로 온전히 받아옵니다.
+            _, last_ndvi, _, last_stats = get_ndvi_for_period(
+                region, str(ly_start), str(ly_end), cloud_threshold + 10 
             )
             
             # 지도 시각화용 타일 URL 추출
@@ -165,6 +167,16 @@ if st.sidebar.button("🔍 다중 시계열 정밀 분석"):
 
             vis_params_ndvi = {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}
             ndvi_tile_url = get_ee_tile_url(this_ndvi.clip(region), vis_params_ndvi)
+
+            # 💡 수정포인트 2: (올해 NDVI - 작년 NDVI) 연산을 수행하고 이상 탐지 지도 URL을 만듭니다.
+            if this_ndvi is not None and last_ndvi is not None:
+                anomaly_ndvi = this_ndvi.subtract(last_ndvi)
+                # 마이너스(-0.3)는 작년보다 나빠진 빨강, 플러스(0.3)는 작년보다 좋아진 초록, 0은 흰색
+                vis_params_anomaly = {'min': -0.3, 'max': 0.3, 'palette': ['red', 'white', 'green']}
+                anomaly_tile_url = get_ee_tile_url(anomaly_ndvi.clip(region), vis_params_anomaly)
+                st.session_state.anomaly_tile_url = anomaly_tile_url
+            else:
+                st.session_state.anomaly_tile_url = None
 
             # 세션 상태 안전하게 바인딩 (지적 2 보완: NoneType 검증 후 대입)
             this_stats = this_stats if this_stats else {}
@@ -219,9 +231,19 @@ if st.session_state.analysis_done:
             control=True
         ).add_to(m)
 
+        # 💡 [여기서부터 추가된 코드] 화면 지도에 이상 탐지(빨강=위험) 레이어 토글 스위치를 추가합니다!
+        if st.session_state.get('anomaly_tile_url'):
+            folium.TileLayer(
+                tiles=st.session_state.anomaly_tile_url,
+                attr='Google Earth Engine',
+                name='🚨 전년 대비 이상 탐지 (빨강=위험)',
+                overlay=True,
+                control=True
+            ).add_to(m)
+
         folium.LayerControl().add_to(m)
         st_folium(m, width=850, height=480, key="ndvi_map", returned_objects=[])
-
+        
     with col2:
         st.subheader("📈 전년 동기 대비 시계열 분석 통계")
         
