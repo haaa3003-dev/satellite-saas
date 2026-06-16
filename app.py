@@ -10,7 +10,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.chart import LineChart, Reference
 
 # =================================================================
-# [백엔드] GEE 인증 및 초기화
+# [백엔드] GEE 인증 및 초기화 (로컬 및 서버 공용 방탄 코드)
 # =================================================================
 @st.cache_resource
 def init_gee():
@@ -41,7 +41,7 @@ def init_gee():
 gee_ready = init_gee()
 
 # =================================================================
-# [백엔드] 플랫폼 확장용 범용 위성 데이터 및 통계 산출 함수
+# [백엔드] 범용 위성 지수(NDVI, NDWI, NBR) 통합 산출 함수
 # =================================================================
 def get_satellite_index_for_period(region, start_date, end_date, cloud_threshold, bands, index_name):
     collection = (
@@ -76,7 +76,7 @@ def get_ee_tile_url(ee_image_object, vis_params):
     return map_id_dict['tile_fetcher'].url_format
 
 # =================================================================
-# [프론트엔드] Streamlit 종합 관제 웹 플랫폼 설정
+# [프론트엔드] Streamlit 종합 관제 웹 플랫폼 레이아웃
 # =================================================================
 st.set_page_config(layout="wide")
 st.title("🛰️ 지자체 종합 재난재해 및 자원관리 원격 관제 플랫폼")
@@ -91,13 +91,13 @@ if not gee_ready:
 # -----------------------------------------------------------------
 st.sidebar.header("🛠️ 종합 관제 컨트롤 패널")
 
-# 분석 목적 스위칭 메뉴
+# 🌟 개선포인트 1: 분석 목적에 따른 3대 다각화 관제 모드 스위칭 인프라 구축
 analysis_mode = st.sidebar.selectbox(
     "🔎 분석 모드 선택", 
     ["🌾 농작물 생육 분석 (NDVI)", "🌊 저수지 및 홍수 모니터링 (NDWI)", "🔥 산불 재해 및 산림 진단 (NBR)"]
 )
 
-# 모드별 알고리즘 및 환경설정 딕셔너리
+# 각 모드별 밴드 조합, 가시화 팰럿, 임계값, 자동 진단 텍스트 맵 설정
 mode_config = {
     "🌾 농작물 생육 분석 (NDVI)": {
         "bands": ['B8', 'B4'], "index_name": "NDVI", "label": "식생활성도",
@@ -133,7 +133,7 @@ cfg = mode_config[analysis_mode]
 st.sidebar.markdown("---")
 st.sidebar.subheader("🎯 관제 타겟 지역 설정")
 
-# 🌟 [지역 프리셋 대폭 확장]: 용도별 다각화 모델 구축
+# 🌟 개선포인트 2: 단순 농경지를 넘어 전국 단위 핵심 지자체 요충지 8곳으로 프리셋 대폭 확장
 region_preset = st.sidebar.selectbox(
     "협업 대상 지자체 및 관제 지역 선택",
     [
@@ -180,19 +180,19 @@ if "analysis_done" not in st.session_state:
     st.session_state.analysis_done = False
 
 # -----------------------------------------------------------------
-# 🔍 종합 원격 분석 엔진 가동
+# 🔍 글로벌 위성 종합 분석 엔진 가동
 # -----------------------------------------------------------------
 if st.sidebar.button("🛰️ 글로벌 위성 분석 엔진 가동"):
     if start_date >= end_date:
         st.warning("⚠️ 관측 날짜 설정을 다시 확인해주세요.")
         st.stop()
 
-    with st.spinner(f"구글 슈퍼컴퓨터 인프라가 {cfg['index_name']} 매핑 및 재해 알고리즘을 연산 중입니다... 🚀"):
+    with st.spinner(f"구글 슈퍼컴퓨터 인프라가 {cfg['index_name']} 매핑 및 알고리즘을 연산 중입니다... 🚀"):
         try:
             point = ee.Geometry.Point([lon, lat])
             region = point.buffer(buffer_m)
             
-            # [올해 위성 원격 진단]
+            # [올해 위성 데이터 원격 진단]
             this_image, this_idx, this_count, this_stats = get_satellite_index_for_period(
                 region, str(start_date), str(end_date), cloud_threshold, cfg['bands'], cfg['index_name']
             )
@@ -231,7 +231,7 @@ if st.sidebar.button("🛰️ 글로벌 위성 분석 엔진 가동"):
             st.session_state.count = this_count
             st.session_state.current_mode = analysis_mode
             
-            # 머리말만 깔끔하게 정제해서 저장 (예: "🌾 [농업] 전북 김제시..." -> "전북 김제시 부량면")
+            # 프리셋에서 행정 구역명만 깔끔하게 파싱 (예: "🌾 [농업] 전북 김제시..." -> "전북 김제시 부량면")
             raw_name = region_preset.split("] ")[-1] if "] " in region_preset else region_preset
             st.session_state.region_name = raw_name.split(" (")[0]
             
@@ -281,6 +281,18 @@ if st.session_state.analysis_done:
                 name='🚨 전년 동기 대비 이상 징후 탐지 레이어 (빨강=위험/위축)', overlay=True, control=True
             ).add_to(m)
 
+        # 🌟 개선포인트 3: 원형 경계선(Border)을 제거하고 부드러운 반투명 색상으로 디지털 트윈 스캔 하이라이트 구현
+        folium.Circle(
+            location=[st.session_state.map_lat, st.session_state.map_lon],
+            radius=buffer_m,
+            stroke=False,                  # 이질감을 주던 외곽선 테두리 라인을 완벽하게 차단
+            fill=True,                     # 내부 채우기 활성화
+            fill_color='#1F4E78',          # 스마트 시티 관제 감성의 세련된 딥 오션 네이비 컬러
+            fill_opacity=0.15,             # 하부 위성 분석 레이어가 자연스럽게 투영되도록 최적의 투명도 세팅
+            popup=f"원격 관제 반경: {buffer_m}m",
+            tooltip="현재 AI 실시간 연산 구역"
+        ).add_to(m)
+
         folium.LayerControl().add_to(m)
         st_folium(m, width=850, height=480, key="platform_map", returned_objects=[])
 
@@ -313,7 +325,7 @@ if st.session_state.analysis_done:
             st.warning(f"🔴 **주의/위험 예찰 단계:** {curr_cfg['desc_bad']}")
 
         # -----------------------------------------------------------------
-        # 📈 AI 시계열 예측 엔진
+        # 📈 AI 시계열 추이 그래프 및 14일 미래 예측 커스텀 모델
         # -----------------------------------------------------------------
         st.markdown("---")
         st.subheader(f"📈 AI 시계열 {idx_name} 추이 및 14일 단기 예측")
@@ -361,7 +373,7 @@ if st.session_state.analysis_done:
             st.warning(f"🤖 **AI 통계 예측:** 현 추세가 고착화되면 2주 뒤 예상 지수는 **{predicted_val:.3f}**에 수렴할 것으로 판단되어 {curr_cfg['ai_bad']}")
 
         # -----------------------------------------------------------------
-        # 📊 지자체 제출용 정식 공문서 양식 Excel 다운로드 빌더
+        # 📊 공공 결재 첨부용 정식 Excel 보고서 빌더 (모드 통합 고도화)
         # -----------------------------------------------------------------
         st.markdown("---")
         st.subheader("📥 지자체 결재 및 첨부용 정식 보고서 (Excel)")
