@@ -1,6 +1,7 @@
 import streamlit as st
 import ee
 import folium
+import requests
 from streamlit_folium import st_folium
 from datetime import date, timedelta
 import pandas as pd
@@ -75,6 +76,42 @@ def get_ee_tile_url(ee_image_object, vis_params):
     map_id_dict = ee.Image(ee_image_object).getMapId(vis_params)
     return map_id_dict['tile_fetcher'].url_format
 
+
+# =================================================================
+# [백엔드] 지명/주소 검색 → 좌표 변환 (지오코딩)
+# OpenStreetMap의 Nominatim API 사용 (무료, API 키 불필요)
+# =================================================================
+@st.cache_data(show_spinner=False)
+def geocode_place(query: str):
+    """
+    지명/주소 문자열을 받아 (위도, 경도, 표시명) 튜플의 리스트를 반환.
+    검색 결과가 없거나 요청이 실패하면 빈 리스트를 반환.
+    """
+    if not query or len(query.strip()) < 2:
+        return []
+
+    url = "https://nominatim.openstreetmap.org/search"
+    params = {
+        "q": query,
+        "format": "json",
+        "limit": 5,
+        "countrycodes": "kr",  # 한국 지역으로 한정해 검색 정확도 향상
+        "accept-language": "ko",
+    }
+    # Nominatim은 User-Agent 헤더가 없으면 요청을 차단함
+    headers = {"User-Agent": "satellite-saas-student-project/1.0"}
+
+    try:
+        res = requests.get(url, params=params, headers=headers, timeout=5)
+        res.raise_for_status()
+        results = res.json()
+        return [
+            (float(item["lat"]), float(item["lon"]), item["display_name"])
+            for item in results
+        ]
+    except Exception:
+        return []
+
 # =================================================================
 # [프론트엔드] Streamlit 종합 관제 웹 플랫폼 레이아웃
 # =================================================================
@@ -145,6 +182,7 @@ region_preset = st.sidebar.selectbox(
         "🔥 [재해] 강원 고성군 토성면 (산불 취약 산림지)", 
         "🔥 [재해] 경북 안동시 풍천면 (산림 보존 구역)",
         "🏙️ [도시] 서울 뚝섬 한강공원 (도심 녹지축)",
+        "🔍 지명/주소로 검색",
         "📍 직접 좌표 입력"
     ]
 )
@@ -162,7 +200,36 @@ preset_coords = {
     "📍 직접 좌표 입력": (36.9910, 127.9259)
 }
 
-default_lat, default_lon = preset_coords[region_preset]
+# -----------------------------------------------------------------
+# 🔍 지명/주소 검색 → 좌표 자동 변환 UI
+# -----------------------------------------------------------------
+if region_preset == "🔍 지명/주소로 검색":
+    search_query = st.sidebar.text_input(
+        "지명 또는 주소를 입력하세요",
+        placeholder="예: 충주시 살미면, 김제시청, 해남군 황산면사무소"
+    )
+
+    if search_query:
+        search_results = geocode_place(search_query)
+
+        if not search_results:
+            st.sidebar.warning("⚠️ 검색 결과가 없습니다. 다른 키워드로 시도해보세요 (예: 동/면 단위까지 입력).")
+            default_lat, default_lon = preset_coords["📍 직접 좌표 입력"]
+        else:
+            # 검색 결과가 여러 개면 선택할 수 있게 표시
+            option_labels = [name for (_, _, name) in search_results]
+            selected_label = st.sidebar.radio(
+                "검색된 위치 중 선택하세요",
+                option_labels,
+                index=0
+            )
+            selected = next(r for r in search_results if r[2] == selected_label)
+            default_lat, default_lon = selected[0], selected[1]
+            st.sidebar.success(f"📍 좌표 적용됨: ({default_lat:.4f}, {default_lon:.4f})")
+    else:
+        default_lat, default_lon = preset_coords["📍 직접 좌표 입력"]
+else:
+    default_lat, default_lon = preset_coords[region_preset]
 
 lat = st.sidebar.number_input("위도 (Latitude)", value=default_lat, format="%.4f")
 lon = st.sidebar.number_input("경도 (Longitude)", value=default_lon, format="%.4f")

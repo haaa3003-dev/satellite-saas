@@ -2,9 +2,6 @@ streamlit
 earthengine-api
 folium
 streamlit-folium
-streamlit
-earthengine-api
-folium
-streamlit-folium
 plotly
 openpyxl
+requests
