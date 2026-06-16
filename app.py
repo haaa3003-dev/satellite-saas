@@ -243,7 +243,6 @@ if st.session_state.analysis_done:
 
         folium.LayerControl().add_to(m)
         st_folium(m, width=850, height=480, key="ndvi_map", returned_objects=[])
-        
     with col2:
         st.subheader("📈 전년 동기 대비 시계열 분석 통계")
         
@@ -278,5 +277,45 @@ if st.session_state.analysis_done:
                 f"🔴 **주의 단계:** 평균 지수가 **{avg_ndvi:.2f}**로 다소 낮게 잡힙니다. 모내기 직후라 물이 많이 채워진 상태이거나, "
                 f"최근 기상 악화로 인한 발육 지연일 수 있으니 우측 상단 레이어를 켜서 실제 인공위성 사진과 교차 검증하세요."
             )
+            # 💡 [2, 3번 기획 구현] 실무 보고서용 데이터 요약 및 엑셀(CSV) 다운로드 시스템
+        st.markdown("---")
+        st.subheader("📊 지자체 맞춤형 작황 정밀 분석 보고서 (Excel)")
+        st.caption("공공 기관 제출 및 지자체 실무 보고용 원본 수치 레포트 추출 모듈입니다.")
+
+        import pandas as pd
+
+        # 엑셀 시트에 정리되어 들어갈 데이터 테이블 정의
+        report_data = {
+            "분석 지표 항목": [
+                "관측 대상 지자체", 
+                "관측 대상 작물명", 
+                "올해 관측 평균 식생지수 (NDVI)", 
+                "작년 동기 평균 식생지수 (NDVI)", 
+                "전년 동기 대비 최종 증감량",
+                "구글 위성 분석 활용 영상 수",
+                "종합 생육 평가 등급"
+            ],
+            "분석 수치 및 결과": [
+                st.session_state.region_name,
+                st.session_state.crop_type,
+                f"{avg_ndvi:.3f}",
+                f"{last_avg:.3f}" if last_avg is not None else "데이터 미비",
+                f"{avg_ndvi - last_avg:+.3f}" if last_avg is not None else "비교 불가",
+                f"{st.session_state.count} 장",
+                "우수 (안정적 정상 생육)" if avg_ndvi >= 0.4 else "주의 (정밀 예찰 필요)"
+            ]
+        }
+        
+        # 다운로드용 데이터프레임 변환 및 한글 깨짐 방지 인코딩(utf-8-sig) 적용
+        df = pd.DataFrame(report_data)
+        csv = df.to_csv(index=False).encode('utf-8-sig')
+        
+        # UI에 정식 다운로드 버튼 배치
+        st.download_button(
+            label="📥 실무 보고용 작황 분석 원본 데이터 다운로드 (Excel/CSV)",
+            data=csv,
+            file_name=f"[{st.session_state.region_name}]_{st.session_state.crop_type}_작황분석보고서.csv",
+            mime="text/csv",
+        )
 else:
     st.info("👈 왼쪽 컨트롤 패널에서 협업 대상 지자체를 선택하고 '다중 시계열 정밀 분석' 버튼을 클릭해 보세요.")
