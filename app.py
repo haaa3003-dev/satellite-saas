@@ -44,7 +44,6 @@ gee_ready = init_gee()
 # [백엔드] 플랫폼 확장용 범용 위성 데이터 및 통계 산출 함수
 # =================================================================
 def get_satellite_index_for_period(region, start_date, end_date, cloud_threshold, bands, index_name):
-    """선택된 분석 목적(모드)의 밴드 수식을 받아 동적으로 지수를 계산하는 범용 함수"""
     collection = (
         ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
         .filterBounds(region)
@@ -56,7 +55,6 @@ def get_satellite_index_for_period(region, start_date, end_date, cloud_threshold
         return None, None, 0, None
         
     image = collection.median()
-    # 💡 사용자가 선택한 모드의 밴드 조합으로 원격탐사 지수 실시간 연산
     calculated_index = image.normalizedDifference(bands).rename(index_name)
     
     try:
@@ -89,17 +87,17 @@ if not gee_ready:
     st.stop()
 
 # -----------------------------------------------------------------
-# 🎛️ 사이드바 컨트롤 패널 (종합 플랫폼 업그레이드)
+# 🎛️ 사이드바 컨트롤 패널
 # -----------------------------------------------------------------
 st.sidebar.header("🛠️ 종합 관제 컨트롤 패널")
 
-# 🌟 핵심 고도화: 분석 목적 스위칭 메뉴 탑재
+# 분석 목적 스위칭 메뉴
 analysis_mode = st.sidebar.selectbox(
     "🔎 분석 모드 선택", 
     ["🌾 농작물 생육 분석 (NDVI)", "🌊 저수지 및 홍수 모니터링 (NDWI)", "🔥 산불 재해 및 산림 진단 (NBR)"]
 )
 
-# 모드별 알고리즘 및 환경설정 딕셔너리 빌드
+# 모드별 알고리즘 및 환경설정 딕셔너리
 mode_config = {
     "🌾 농작물 생육 분석 (NDVI)": {
         "bands": ['B8', 'B4'], "index_name": "NDVI", "label": "식생활성도",
@@ -134,19 +132,37 @@ cfg = mode_config[analysis_mode]
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🎯 관제 타겟 지역 설정")
+
+# 🌟 [지역 프리셋 대폭 확장]: 용도별 다각화 모델 구축
 region_preset = st.sidebar.selectbox(
-    "협업 대상 지자체 지역 프리셋",
-    ["전북 김제시 부량면 (벽골제 평야 중심부)", "충남 당진시 합덕읍 (당진평야 주산지)", "전남 해남군 황산면 (대규모 필드)", "직접 좌표 입력"]
+    "협업 대상 지자체 및 관제 지역 선택",
+    [
+        "🌾 [농업] 전북 김제시 부량면 (벽골제 평야)", 
+        "🌾 [농업] 충남 당진시 합덕읍 (당진평야)", 
+        "🌾 [농업] 전남 해남군 황산면 (대규모 필드)",
+        "🌊 [수자원] 충북 충주시 종민동 (충주호 저수지)", 
+        "🌊 [수자원] 강원 춘천시 신북읍 (소양강댐 부근)",
+        "🔥 [재해] 강원 고성군 토성면 (산불 취약 산림지)", 
+        "🔥 [재해] 경북 안동시 풍천면 (산림 보존 구역)",
+        "🏙️ [도시] 서울 뚝섬 한강공원 (도심 녹지축)",
+        "📍 직접 좌표 입력"
+    ]
 )
 
-if region_preset == "전북 김제시 부량면 (벽골제 평야 중심부)":
-    default_lat, default_lon = 35.7684, 126.8643
-elif region_preset == "충남 당진시 합덕읍 (당진평야 주산지)":
-    default_lat, default_lon = 36.8250, 126.7720
-elif region_preset == "전남 해남군 황산면 (대규모 필드)":
-    default_lat, default_lon = 34.6150, 126.4780
-else:
-    default_lat, default_lon = 36.9910, 127.9259
+# 확장 프리셋별 정밀 위경도 매핑 딕셔너리
+preset_coords = {
+    "🌾 [농업] 전북 김제시 부량면 (벽골제 평야)": (35.7684, 126.8643),
+    "🌾 [농업] 충남 당진시 합덕읍 (당진평야)": (36.8250, 126.7720),
+    "🌾 [농업] 전남 해남군 황산면 (대규모 필드)": (34.6150, 126.4780),
+    "🌊 [수자원] 충북 충주시 종민동 (충주호 저수지)": (36.9910, 127.9259),
+    "🌊 [수자원] 강원 춘천시 신북읍 (소양강댐 부근)": (37.9425, 127.8140),
+    "🔥 [재해] 강원 고성군 토성면 (산불 취약 산림지)": (38.2250, 128.5110),
+    "🔥 [재해] 경북 안동시 풍천면 (산림 보존 구역)": (36.5750, 128.5210),
+    "🏙️ [도시] 서울 뚝섬 한강공원 (도심 녹지축)": (37.5285, 127.0675),
+    "📍 직접 좌표 입력": (36.9910, 127.9259)
+}
+
+default_lat, default_lon = preset_coords[region_preset]
 
 lat = st.sidebar.number_input("위도 (Latitude)", value=default_lat, format="%.4f")
 lon = st.sidebar.number_input("경도 (Longitude)", value=default_lon, format="%.4f")
@@ -200,14 +216,13 @@ if st.sidebar.button("🛰️ 글로벌 위성 분석 엔진 가동"):
             vis_params_idx = {'min': cfg['min'], 'max': cfg['max'], 'palette': cfg['palette']}
             idx_tile_url = get_ee_tile_url(this_idx.clip(region), vis_params_idx)
 
-            # 전년 동기 대비 변화 분석 (이상 탐지 매핑)
-            if this_idx is not None and last_idx is not None:
+            if this_idx is None or last_idx is None:
+                st.session_state.anomaly_tile_url = None
+            else:
                 anomaly_idx = this_idx.subtract(last_idx)
                 vis_params_anomaly = {'min': cfg['anomaly_min'], 'max': cfg['anomaly_max'], 'palette': ['red', 'white', 'green']}
                 anomaly_tile_url = get_ee_tile_url(anomaly_idx.clip(region), vis_params_anomaly)
                 st.session_state.anomaly_tile_url = anomaly_tile_url
-            else:
-                st.session_state.anomaly_tile_url = None
 
             this_stats = this_stats if this_stats else {}
             st.session_state.analysis_done = True
@@ -215,9 +230,11 @@ if st.sidebar.button("🛰️ 글로벌 위성 분석 엔진 가동"):
             st.session_state.idx_tile_url = idx_tile_url
             st.session_state.count = this_count
             st.session_state.current_mode = analysis_mode
-            st.session_state.region_name = region_preset.split(" (")[0]
             
-            # 가변 변수 추출
+            # 머리말만 깔끔하게 정제해서 저장 (예: "🌾 [농업] 전북 김제시..." -> "전북 김제시 부량면")
+            raw_name = region_preset.split("] ")[-1] if "] " in region_preset else region_preset
+            st.session_state.region_name = raw_name.split(" (")[0]
+            
             st.session_state.avg_val = this_stats.get(f"{cfg['index_name']}_mean", 0) or 0
             st.session_state.max_val = this_stats.get(f"{cfg['index_name']}_max", 0) or 0
             
@@ -237,7 +254,6 @@ if st.sidebar.button("🛰️ 글로벌 위성 분석 엔진 가동"):
 # 🖥️ 화면 출력 및 동적 리포트 시각화 구역
 # =================================================================
 if st.session_state.analysis_done:
-    # 안전장치: 현재 세션이 바라보는 모드 설정값 로드
     curr_cfg = mode_config.get(st.session_state.current_mode, cfg)
     idx_name = curr_cfg['index_name']
 
@@ -297,7 +313,7 @@ if st.session_state.analysis_done:
             st.warning(f"🔴 **주의/위험 예찰 단계:** {curr_cfg['desc_bad']}")
 
         # -----------------------------------------------------------------
-        # 📈 AI 시계열 예측 엔진 (모드 가변형)
+        # 📈 AI 시계열 예측 엔진
         # -----------------------------------------------------------------
         st.markdown("---")
         st.subheader(f"📈 AI 시계열 {idx_name} 추이 및 14일 단기 예측")
@@ -306,7 +322,6 @@ if st.session_state.analysis_done:
         growth_rate = (avg_val - curr_cfg['baseline']) / days_passed 
         
         future_date = end_date + timedelta(days=14)
-        # 지수 범위 이탈 방지 조절 (min/max 클리핑)
         predicted_val = max(curr_cfg['min'], min(avg_val + (growth_rate * 14), curr_cfg['ceil']))
 
         fig = go.Figure()
@@ -385,7 +400,6 @@ if st.session_state.analysis_done:
             workbook = writer.book
             worksheet = writer.sheets['종합관제보고서']
             
-            # 행정 공문서용 클래식 네이비 디자인 서식 적용
             header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
             header_font = Font(name="맑은 고딕", size=11, bold=True, color="FFFFFF")
             data_font = Font(name="맑은 고딕", size=10)
@@ -413,7 +427,6 @@ if st.session_state.analysis_done:
                     else:
                         cell.alignment = left_align
 
-            # 📊 엑셀 자동 시계열 차트 내장화
             chart = LineChart()
             chart.title = f"📈 {st.session_state.region_name} 구역 [{idx_name}] 종합 관제 시계열 추이"
             chart.style = 13
@@ -454,4 +467,4 @@ if st.session_state.analysis_done:
         )
         
 else:
-    st.info("👈 왼쪽 컨트롤 패널에서 '분석 모드(농업/수자원/재해)'를 선택하고 엔진 가동 버튼을 클릭해 보세요.")
+    st.info("👈 왼쪽 컨트롤 패널에서 분석 모드와 확장된 지자체 타겟 지역을 선택하고 엔진 가동 버튼을 클릭해 보세요.")
