@@ -3,3 +3,4 @@ pandas
 folium
 xlsxwriter
 earthengine-api
+requests
