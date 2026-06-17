@@ -1,6 +1,7 @@
 streamlit
-pandas
-folium
-xlsxwriter
 earthengine-api
+folium
+streamlit-folium
+plotly
+openpyxl
 requests
