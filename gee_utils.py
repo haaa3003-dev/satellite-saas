@@ -5,7 +5,13 @@ import ee
 @st.cache_resource
 def init_gee():
     """구글 어스 엔진 인증 및 초기화"""
-    if "gee_credentials" in st.secrets:
+    try:
+        has_cloud_secrets = "gee_credentials" in st.secrets
+    except Exception:
+        # secrets.toml 파일이 없는 로컬 환경 (Streamlit Cloud에만 등록된 경우 등)
+        has_cloud_secrets = False
+
+    if has_cloud_secrets:
         try:
             cred_info = st.secrets["gee_credentials"]
             credentials = ee.ServiceAccountCredentials(
