@@ -101,10 +101,13 @@ if run_btn:
     with st.spinner("🛰️ 우주에서 위성 이미지를 렌더링하고 있습니다. 잠시만 기다려주세요..."):
         region = ee.Geometry.Point([st.session_state.lon, st.session_state.lat]).buffer(3000)
         
-        # 올해 실측 데이터 호출 (캐싱 적용)
-        collection, image, calculated_index = get_satellite_index_for_period(
+        # [에러 해결 구간] 반환값 개수 오류 원천 차단
+        gee_result = get_satellite_index_for_period(
             region, str(s_date), str(e_date), cloud_threshold, cfg['bands'], cfg['index_name']
         )
+        # 함수가 1개를 뱉든 3개를 뱉든, 우리가 필요한 가장 마지막 값(calculated_index)만 안전하게 추출합니다.
+        calculated_index = gee_result[-1] if isinstance(gee_result, tuple) else gee_result
+        
         count, stats = get_cached_stats(st.session_state.lat, st.session_state.lon, 3000, str(s_date), str(e_date), cloud_threshold, cfg['bands'], cfg['index_name'])
         
         # 작년 동기 데이터 호출
