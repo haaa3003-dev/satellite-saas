@@ -171,17 +171,17 @@ if run_btn:
             st.markdown("현재 조회하신 데이터를 바탕으로 문서 첨부용 정식 보고서를 생성합니다.")
             reliability_score = "우수 (95%)" if cloud_threshold <= 25 else "보통 (80%)"
             
-            # 기존 report_builder.py 구조와 완벽 연동 (행 단위 리스트 매칭)
+            # 기존 report_builder.py가 한 자 한 자 체크하는 완벽한 옛날 컬럼 명칭 복원
             df_report = pd.DataFrame({
                 "관측 시점": ["전년 동기 평균 (대조군)", f"올해 실측 평균 ({e_date.strftime('%m/%d')})"],
                 f"원격 탐사 지수 ({idx_name})": [round(last_avg, 4) if last_avg is not None else 0.0, round(avg_val, 4)],
                 "행정 정보 및 안전 진단 통계": [
-                    f"관제 구역: {st.session_state.region_name} / 모드: {st.session_state.current_mode}", 
-                    f"전년 대비 변화율: {change_rate:+.2f}% / 신뢰도: {reliability_score}"
+                    f"관제 지자체: {st.session_state.region_name} / 플랫폼 모드: {st.session_state.current_mode}", 
+                    f"전년 동기 대비 변화율: {change_rate:+.2f}% / 위성 데이터 신뢰도: {reliability_score}"
                 ],
                 "최종 분석 및 관리자 가이드": [
-                    cfg['desc_good'] if avg_val >= cfg['threshold'] else cfg['desc_bad'], 
-                    f"총 {count}개의 유효 위성 레이어가 합성되었습니다."
+                    f"상태 진단: {cfg['desc_good'] if avg_val >= cfg['threshold'] else cfg['desc_bad']}", 
+                    f"데이터 요약: 총 {count}개의 유효 위성 레이어가 합성되었습니다."
                 ]
             })
             st.dataframe(df_report, hide_index=True)
