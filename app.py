@@ -56,11 +56,12 @@ with col1:
 with col2:
     preset_choice = st.selectbox("📌 주요 관심 지역 빠르게 이동", ["직접 검색"] + list(preset_coords.keys()))
 
-# 세션 상태 초기화 (처음 접속 시 기본값)
+# 세션 상태 초기화 (mode_config.py에 있는 첫 번째 지역을 자동으로 기본값 설정)
 if 'lat' not in st.session_state:
-    st.session_state.lat = preset_coords["충주호 (기본)"][0]
-    st.session_state.lon = preset_coords["충주호 (기본)"][1]
-    st.session_state.region_name = "충주호 (기본)"
+    first_preset = list(preset_coords.keys())[0]
+    st.session_state.lat = preset_coords[first_preset][0]
+    st.session_state.lon = preset_coords[first_preset][1]
+    st.session_state.region_name = first_preset
 
 # 지역 변경 로직 처리
 if search_query:
@@ -94,7 +95,6 @@ with col_d4:
 # 5. 위성 분석 렌더링 영역
 # -----------------------------------------------------------------
 if run_btn:
-    # 이전에 안전하게 돌아가던 변수 세팅 그대로 유지
     st.session_state.current_mode = analysis_mode
     st.markdown("---")
 
