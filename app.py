@@ -141,38 +141,69 @@ if st.session_state.get('run_triggered', False):
         # [핵심] returned_objects=[] 를 추가하여 지도를 움직여도 새로고침되지 않게 막음
         st_folium(m, width="100%", height=500, returned_objects=[])
 
-        # [B] 차트 및 데이터 인사이트
+     # [B] 차트 및 데이터 인사이트 (3단 대시보드 레이아웃으로 고도화)
         st.markdown("---")
         st.subheader("📊 데이터 분석 결과")
         
-        col_m1, col_m2 = st.columns([1, 1])
+        # 화면을 3분할하여 꽉 찬 느낌을 줍니다.
+        col_m1, col_m2, col_m3 = st.columns([1, 1, 1])
+        
         with col_m1:
-            fig = go.Figure()
-            fig.add_trace(go.Bar(
+            st.markdown("#### 🧭 현재 지수 상태")
+            # 1. 텅 비어보이지 않도록 화려한 게이지(계기판) 차트 추가
+            fig_gauge = go.Figure(go.Indicator(
+                mode = "gauge+number",
+                value = avg_val,
+                title = {'text': f"{idx_name} 평균 지수", 'font': {'size': 14}},
+                gauge = {
+                    'axis': {'range': [cfg['min'], cfg['max']]},
+                    'bar': {'color': "#2ecc71" if avg_val >= cfg['threshold'] else "#e74c3c"},
+                    'threshold': {
+                        'line': {'color': "red", 'width': 3},
+                        'thickness': 0.75,
+                        'value': cfg['threshold']
+                    }
+                }
+            ))
+            fig_gauge.update_layout(height=250, margin=dict(l=20, r=20, t=40, b=20))
+            st.plotly_chart(fig_gauge, use_container_width=True)
+
+        with col_m2:
+            st.markdown("#### 📅 전년 대비 비교")
+            # 2. 막대 그래프 디자인 개선
+            fig_bar = go.Figure()
+            fig_bar.add_trace(go.Bar(
                 x=["전년 동기", "올해 실측"],
                 y=[last_avg if last_avg is not None else 0, avg_val],
-                marker_color=['#95a5a6', '#2980b9'],
+                marker_color=['#bdc3c7', '#3498db' if avg_val >= cfg['threshold'] else '#e74c3c'],
                 text=[f"{last_avg:.4f}" if last_avg is not None else "데이터 없음", f"{avg_val:.4f}"],
                 textposition='auto'
             ))
-            fig.update_layout(title=f"📅 전년 동기 대비 {idx_name} 지수 비교",
-                              yaxis=dict(range=[cfg['min'] - 0.1, cfg['max'] + 0.1]))
-            st.plotly_chart(fig, use_container_width=True)
-            st.caption("ℹ️ 위 수치는 위성 영상으로 실측된 평균값만을 표시합니다. (예측값 아님)")
+            fig_bar.update_layout(
+                height=250, 
+                margin=dict(l=20, r=20, t=40, b=20),
+                yaxis=dict(range=[cfg['min'] - 0.1, cfg['max'] + 0.1])
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
 
-        with col_m2:
-            st.markdown("#### 💡 위성 인사이트")
-            if avg_val >= cfg['threshold']:
-                st.success(f"**상태 양호**: {cfg['desc_good']}")
-            else:
-                st.error(f"**주의 요망**: {cfg['desc_bad']}")
+        with col_m3:
+            st.markdown("#### 💡 종합 진단 요약")
+            st.markdown("<br>", unsafe_allow_html=True)
             
+            # 3. 데이터가 없을 때도 UI가 깨지지 않도록 Metric 개선
             if last_avg is not None and last_avg != 0:
                 change_rate = ((avg_val - last_avg) / abs(last_avg)) * 100
-                st.metric(label="전년 동기 대비 변화율", value=f"{change_rate:+.2f}%")
+                st.metric(label="📈 전년 동기 대비 변화율", value=f"{avg_val:.4f}", delta=f"{change_rate:+.2f}%")
             else:
                 change_rate = 0
-                st.metric(label="전년 동기 대비 변화율", value="비교 데이터 없음")
+                st.metric(label="📈 전년 동기 대비 변화율", value=f"{avg_val:.4f}", delta="비교 불가 (전년 데이터 없음)", delta_color="off")
+                
+            st.markdown("---")
+            # 상태 경고창 디자인
+            if avg_val >= cfg['threshold']:
+                st.success(f"**🟢 상태 양호**\n\n{cfg['desc_good']}")
+            else:
+                st.error(f"**🔴 주의 요망**\n\n{cfg['desc_bad']}")
 
         # [C] 엑셀 보고서 다운로드
         st.markdown("<br>", unsafe_allow_html=True)
