@@ -29,34 +29,50 @@ def init_gee():
             except Exception:
                 return False
 
-def get_satellite_index_for_period(region, start_date, end_date, cloud_threshold, bands, index_name):
-    """지정 기간/구역 내 Sentinel-2 위성 지수 및 통계량 산출"""
+def _build_index_image(region, start_date, end_date, cloud_threshold, bands, index_name):
+    """공통 합성 이미지 및 지수 빌더 (ee 객체 반환, lazy 연산이라 가벼움)"""
     collection = (
         ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
         .filterBounds(region)
         .filterDate(start_date, end_date)
         .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', cloud_threshold))
     )
-    count = collection.size().getInfo()
-    if count == 0:
-        return None, None, 0, None
-        
     image = collection.median()
     calculated_index = image.normalizedDifference(bands).rename(index_name)
-    
+    return collection, image, calculated_index
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_cached_stats(lat, lon, buffer_m, start_date, end_date, cloud_threshold, bands, index_name):
+    """위경도/기간/구름기준이 동일하면 GEE 서버 재호출 없이 캐시된 통계 반환.
+    실제 쿼터/네트워크 비용이 드는 .getInfo() 호출 부분만 캐싱 대상으로 분리했다.
+    (ee.Image 자체는 직렬화가 안 돼서 캐싱 불가 — count/stats 같은 순수 값만 반환)
+    """
+    region = ee.Geometry.Point([lon, lat]).buffer(buffer_m)
+    collection, _, calculated_index = _build_index_image(region, start_date, end_date, cloud_threshold, bands, index_name)
+
+    count = collection.size().getInfo()
+    if count == 0:
+        return 0, None
+
     try:
         stats = calculated_index.reduceRegion(
             reducer=ee.Reducer.mean().combine(ee.Reducer.max(), sharedInputs=True),
             geometry=region,
             scale=10
         ).getInfo()
-        
         if stats is None:
             stats = {}
     except Exception:
         stats = {}
-        
-    return image, calculated_index, count, stats
+
+    return count, stats
+
+
+def get_satellite_index_for_period(region, start_date, end_date, cloud_threshold, bands, index_name):
+    """타일 렌더링용 ee 이미지/인덱스 객체 반환 (캐싱 불가, 매번 새로 빌드)"""
+    _, image, calculated_index = _build_index_image(region, start_date, end_date, cloud_threshold, bands, index_name)
+    return image, calculated_index
 
 def get_ee_tile_url(ee_image_object, vis_params):
     """GEE 지도 레이어 타일 URL 반환"""

@@ -48,8 +48,8 @@ def generate_excel_report(df, idx_name, region_name, current_mode, change_rate, 
         chart.width = 17
         chart.height = 10
         
-        data_ref = Reference(worksheet, min_col=2, min_row=1, max_row=5)
-        cats_ref = Reference(worksheet, min_col=1, min_row=2, max_row=5)
+        data_ref = Reference(worksheet, min_col=2, min_row=1, max_row=len(df) + 1)
+        cats_ref = Reference(worksheet, min_col=1, min_row=2, max_row=len(df) + 1)
         chart.add_data(data_ref, titles_from_data=True)
         chart.set_categories(cats_ref)
         chart.legend = None

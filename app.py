@@ -9,7 +9,7 @@ import plotly.graph_objects as go
 
 # 핵심 커스텀 모듈 임포트
 from mode_config import mode_config, preset_coords
-from gee_utils import init_gee, get_satellite_index_for_period, get_ee_tile_url
+from gee_utils import init_gee, get_satellite_index_for_period, get_cached_stats, get_ee_tile_url
 from geocoding import geocode_place
 from report_builder import generate_excel_report
 
@@ -89,20 +89,30 @@ if st.sidebar.button("🛰️ 글로벌 위성 분석 엔진 가동"):
             point = ee.Geometry.Point([lon, lat])
             region = point.buffer(buffer_m)
             
-            this_image, this_idx, this_count, this_stats = get_satellite_index_for_period(
-                region, str(start_date), str(end_date), cloud_threshold, cfg['bands'], cfg['index_name']
+            this_count, this_stats = get_cached_stats(
+                lat, lon, buffer_m, str(start_date), str(end_date), cloud_threshold, cfg['bands'], cfg['index_name']
             )
-            
-            if this_idx is None:
+
+            if this_count == 0:
                 st.session_state.analysis_done = False
                 st.warning("⚠️ 선택 기간에 구름 피복률이 높아 위성 영상을 합성할 수 없습니다.")
                 st.stop()
-                
+
+            this_image, this_idx = get_satellite_index_for_period(
+                region, str(start_date), str(end_date), cloud_threshold, cfg['bands'], cfg['index_name']
+            )
+
             ly_start = start_date.replace(year=start_date.year - 1)
             ly_end = end_date.replace(year=end_date.year - 1)
-            _, last_idx, _, last_stats = get_satellite_index_for_period(
-                region, str(ly_start), str(ly_end), cloud_threshold + 10, cfg['bands'], cfg['index_name']
+            last_count, last_stats = get_cached_stats(
+                lat, lon, buffer_m, str(ly_start), str(ly_end), cloud_threshold, cfg['bands'], cfg['index_name']
             )
+            if last_count > 0:
+                _, last_idx = get_satellite_index_for_period(
+                    region, str(ly_start), str(ly_end), cloud_threshold, cfg['bands'], cfg['index_name']
+                )
+            else:
+                last_idx = None
             
             # 레이어 렌더링 세팅 정보
             vis_params_rgb = {'bands': ['B4', 'B3', 'B2'], 'min': 0, 'max': 2500}
@@ -167,33 +177,36 @@ if st.session_state.analysis_done:
         else:
             st.warning(f"🔴 **주의/위험 예찰 단계:** {curr_cfg['desc_bad']}")
 
-        # AI 단기 예측 그래프 시각화
+        # 전년 동기 대비 실측 비교 그래프 (예측 없음, 실측값만)
         st.markdown("---")
-        st.subheader(f"📈 AI 시계열 {idx_name} 추이 및 14일 단기 예측")
+        st.subheader(f"📈 전년 동기 대비 {idx_name} 실측 비교")
         s_date, e_date = st.session_state.start_date, st.session_state.end_date
-        days_passed = (e_date - s_date).days if (e_date - s_date).days > 0 else 1
-        growth_rate = (avg_val - curr_cfg['baseline']) / days_passed 
-        future_date = e_date + timedelta(days=14)
-        predicted_val = max(curr_cfg['min'], min(avg_val + (growth_rate * 14), curr_cfg['ceil']))
+
+        categories, values, colors = [], [], []
+        if last_avg is not None:
+            categories.append("전년 동기 평균")
+            values.append(last_avg)
+            colors.append("lightgray")
+        categories.append(f"올해 실측 평균 ({e_date.strftime('%m/%d')})")
+        values.append(avg_val)
+        colors.append("#1F4E78")
 
         fig = go.Figure()
-        if last_avg is not None:
-            fig.add_trace(go.Bar(x=[e_date.strftime("%Y-%m-%d")], y=[last_avg], name="전년 동기", marker_color="lightgray", width=0.2))
-        fig.add_trace(go.Scatter(x=[s_date.strftime("%Y-%m-%d"), e_date.strftime("%Y-%m-%d")], y=[curr_cfg['baseline'], avg_val], mode='lines+markers+text', name="올해 관측 추이", line=dict(color="blue", width=4), text=["분석 시작", f"현재 ({avg_val:.3f})"], textposition="top center"))
-        fig.add_trace(go.Scatter(x=[e_date.strftime("%Y-%m-%d"), future_date.strftime("%Y-%m-%d")], y=[avg_val, predicted_val], mode='lines+markers+text', name="AI 2주 예측선", line=dict(color="orange", width=3, dash='dot'), text=["", f"예측치 ({predicted_val:.3f})"], textposition="top right"))
-        fig.update_layout(plot_bgcolor='rgba(240, 240, 240, 0.5)', yaxis_title=f"{idx_name} 지수", xaxis_title="관제 시점", yaxis=dict(range=[curr_cfg['min'] - 0.1, curr_cfg['max'] + 0.1]), legend=dict(orientation="h", y=1.1, x=1))
+        fig.add_trace(go.Bar(x=categories, y=values, marker_color=colors, text=[f"{v:.4f}" for v in values], textposition="outside"))
+        fig.update_layout(plot_bgcolor='rgba(240, 240, 240, 0.5)', yaxis_title=f"{idx_name} 지수", yaxis=dict(range=[curr_cfg['min'] - 0.1, curr_cfg['max'] + 0.1]), showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
+        st.caption("ℹ️ 위 수치는 위성 영상으로 실측된 평균값만을 표시합니다. (예측값 아님)")
 
         # Excel 데이터 가공 및 파일 래핑
         st.markdown("---")
         st.subheader("📥 지자체 결재 및 첨부용 정식 보고서 (Excel)")
         change_rate = ((avg_val - last_avg) / abs(last_avg) * 100) if last_avg and abs(last_avg) > 0 else 0
         reliability_score = "우수 (95%)" if cloud_threshold <= 25 else "보통 (80%)"
-        
+
         df_report = pd.DataFrame({
-            "관측 및 AI 예측 시점": [f"분석 시작일 ({s_date.strftime('%m/%d')})", "전년 동기 평균 (대조군)", f"올해 현재 실측 ({e_date.strftime('%m/%d')})", f"AI 2주 뒤 예측 ({future_date.strftime('%m/%d')})"],
-            f"원격 탐사 지수 ({idx_name})": [round(curr_cfg['baseline'], 4), round(last_avg, 4) if last_avg is not None else round(curr_cfg['threshold'], 4), round(avg_val, 4), round(predicted_val, 4)],
-            "행정 정보 및 안전 진단 통계": [f"관제 지자체: {st.session_state.region_name}", f"플랫폼 모드: {st.session_state.current_mode}", f"전년 동기 대비 변화율: {change_rate:+.2f}%", f"위성 데이터 신뢰도: {reliability_score} ({st.session_state.count}장 합성)"]
+            "관측 시점": ["전년 동기 평균 (대조군)" if last_avg is not None else "전년 동기 데이터 없음", f"올해 실측 평균 ({e_date.strftime('%m/%d')})"],
+            f"원격 탐사 지수 ({idx_name})": [round(last_avg, 4) if last_avg is not None else None, round(avg_val, 4)],
+            "행정 정보 및 안전 진단 통계": [f"관제 지자체: {st.session_state.region_name} / 플랫폼 모드: {st.session_state.current_mode}", f"전년 동기 대비 변화율: {change_rate:+.2f}% / 위성 데이터 신뢰도: {reliability_score} ({st.session_state.count}장 합성)"]
         })
         
         excel_data = generate_excel_report(df_report, idx_name, st.session_state.region_name, st.session_state.current_mode, change_rate, reliability_score, st.session_state.count)
