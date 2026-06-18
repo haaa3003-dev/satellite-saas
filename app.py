@@ -56,7 +56,7 @@ with col1:
 with col2:
     preset_choice = st.selectbox("📌 주요 관심 지역 빠르게 이동", ["직접 검색"] + list(preset_coords.keys()))
 
-# 세션 상태 초기화 (mode_config.py에 있는 첫 번째 지역을 자동으로 기본값 설정)
+# 세션 상태 초기화
 if 'lat' not in st.session_state:
     first_preset = list(preset_coords.keys())[0]
     st.session_state.lat = preset_coords[first_preset][0]
@@ -92,25 +92,28 @@ with col_d4:
 
 
 # -----------------------------------------------------------------
-# 5. 위성 분석 렌더링 영역
+# 5. 위성 분석 렌더링 영역 (지도 증발 방지 로직 적용)
 # -----------------------------------------------------------------
+# 버튼을 누르면 '실행됨' 상태를 기억시킴
 if run_btn:
+    st.session_state.run_triggered = True
+
+# 버튼이 눌린 적이 있다면 계속 지도를 띄워둠
+if st.session_state.get('run_triggered', False):
     st.session_state.current_mode = analysis_mode
     st.markdown("---")
 
     with st.spinner("🛰️ 우주에서 위성 이미지를 렌더링하고 있습니다. 잠시만 기다려주세요..."):
         region = ee.Geometry.Point([st.session_state.lon, st.session_state.lat]).buffer(3000)
         
-        # [에러 해결 구간] 반환값 개수 오류 원천 차단
+        # GEE 데이터 호출
         gee_result = get_satellite_index_for_period(
             region, str(s_date), str(e_date), cloud_threshold, cfg['bands'], cfg['index_name']
         )
-        # 함수가 1개를 뱉든 3개를 뱉든, 우리가 필요한 가장 마지막 값(calculated_index)만 안전하게 추출합니다.
         calculated_index = gee_result[-1] if isinstance(gee_result, tuple) else gee_result
         
         count, stats = get_cached_stats(st.session_state.lat, st.session_state.lon, 3000, str(s_date), str(e_date), cloud_threshold, cfg['bands'], cfg['index_name'])
         
-        # 작년 동기 데이터 호출
         ly_start = s_date.replace(year=s_date.year - 1)
         ly_end = e_date.replace(year=e_date.year - 1)
         last_count, last_stats = get_cached_stats(st.session_state.lat, st.session_state.lon, 3000, str(ly_start), str(ly_end), cloud_threshold, cfg['bands'], cfg['index_name'])
@@ -134,7 +137,9 @@ if run_btn:
             overlay=True,
             control=True
         ).add_to(m)
-        st_folium(m, width="100%", height=500)
+        
+        # [핵심] returned_objects=[] 를 추가하여 지도를 움직여도 새로고침되지 않게 막음
+        st_folium(m, width="100%", height=500, returned_objects=[])
 
         # [B] 차트 및 데이터 인사이트
         st.markdown("---")
@@ -169,13 +174,12 @@ if run_btn:
                 change_rate = 0
                 st.metric(label="전년 동기 대비 변화율", value="비교 데이터 없음")
 
-        # [C] 선택적 엑셀 보고서 다운로드 (아코디언 토글 적용)
+        # [C] 엑셀 보고서 다운로드
         st.markdown("<br>", unsafe_allow_html=True)
         with st.expander("🔽 상세 분석 보고서 다운로드 (Excel)"):
             st.markdown("현재 조회하신 데이터를 바탕으로 문서 첨부용 정식 보고서를 생성합니다.")
             reliability_score = "우수 (95%)" if cloud_threshold <= 25 else "보통 (80%)"
             
-            # 오리지널 코드의 완벽한 데이터프레임 구조를 그대로 복구
             df_report = pd.DataFrame({
                 "관측 시점": ["전년 동기 평균 (대조군)" if last_avg is not None else "전년 동기 데이터 없음", f"올해 실측 평균 ({e_date.strftime('%m/%d')})"],
                 f"원격 탐사 지수 ({idx_name})": [round(last_avg, 4) if last_avg is not None else None, round(avg_val, 4)],
@@ -186,7 +190,6 @@ if run_btn:
             })
             st.dataframe(df_report, hide_index=True)
             
-            # 기존 report_builder.py 모듈 그대로 호환 호출
             excel_data = generate_excel_report(
                 df_report, idx_name, st.session_state.region_name, st.session_state.current_mode, 
                 change_rate, reliability_score, count
