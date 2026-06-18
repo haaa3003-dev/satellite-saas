@@ -56,12 +56,18 @@ with col1:
 with col2:
     preset_choice = st.selectbox("📌 주요 관심 지역 빠르게 이동", ["직접 검색"] + list(preset_coords.keys()))
 
-# 세션 상태 초기화
+# [수정됨] 세션 상태 초기화 (KeyError 완벽 방지)
 if 'lat' not in st.session_state:
-    first_preset = list(preset_coords.keys())[0]
-    st.session_state.lat = preset_coords[first_preset][0]
-    st.session_state.lon = preset_coords[first_preset][1]
-    st.session_state.region_name = first_preset
+    if preset_coords:
+        # 딕셔너리의 첫 번째 값을 안전하게 가져옵니다.
+        first_preset = list(preset_coords.keys())[0]
+        st.session_state.lat = preset_coords[first_preset][0]
+        st.session_state.lon = preset_coords[first_preset][1]
+        st.session_state.region_name = first_preset
+    else:
+        # preset_coords가 비어있을 경우 기본 좌표 (서울) 설정
+        st.session_state.lat, st.session_state.lon = 37.5665, 126.9780
+        st.session_state.region_name = "기본 위치 (서울)"
 
 # 지역 변경 로직 처리
 if search_query:
@@ -72,8 +78,9 @@ if search_query:
     else:
         st.warning("⚠️ 검색 결과가 없습니다. 다른 검색어나 조금 더 넓은 지명을 입력해보세요.")
 elif preset_choice != "직접 검색":
-    st.session_state.lat, st.session_state.lon = preset_coords[preset_choice]
-    st.session_state.region_name = preset_choice
+    if preset_choice in preset_coords:
+        st.session_state.lat, st.session_state.lon = preset_coords[preset_choice]
+        st.session_state.region_name = preset_choice
 
 # -----------------------------------------------------------------
 # 4. 상세 조건 설정 및 실행 버튼
@@ -90,9 +97,8 @@ with col_d4:
     st.markdown("<br>", unsafe_allow_html=True) # 줄맞춤용 공백
     run_btn = st.button("🚀 위성 데이터 불러오기", use_container_width=True, type="primary")
 
-
 # -----------------------------------------------------------------
-# 5. 위성 분석 렌더링 영역 (지도 증발 방지 로직 적용)
+# 5. 위성 분석 렌더링 영역
 # -----------------------------------------------------------------
 # 버튼을 누르면 '실행됨' 상태를 기억시킴
 if run_btn:
@@ -122,8 +128,20 @@ if st.session_state.get('run_triggered', False):
         st.warning("⚠️ 지정한 기간과 지역에 구름이 너무 많거나 유효한 위성 사진이 없습니다. 구름 허용률을 높이거나 기간을 넓혀보세요.")
     else:
         idx_name = cfg['index_name']
-        avg_val = stats.get(idx_name, 0)
-        last_avg = last_stats.get(idx_name, None) if last_count > 0 else None
+        
+        # [수정됨] GEE 데이터에서 안전하게 수치 뽑아내기
+        def get_safe_value(stat_dict, default_key):
+            if not stat_dict or not isinstance(stat_dict, dict):
+                return None
+            if default_key in stat_dict:
+                return stat_dict[default_key]
+            for val in stat_dict.values():
+                if isinstance(val, (int, float)):
+                    return val
+            return None
+
+        avg_val = get_safe_value(stats, idx_name) or 0.0
+        last_avg = get_safe_value(last_stats, idx_name) if last_count > 0 else None
 
         # [A] 지도 시각화
         st.subheader(f"🗺️ {st.session_state.region_name} 위성 지도 ({idx_name})")
@@ -138,23 +156,21 @@ if st.session_state.get('run_triggered', False):
             control=True
         ).add_to(m)
         
-        # [핵심] returned_objects=[] 를 추가하여 지도를 움직여도 새로고침되지 않게 막음
+        # returned_objects=[] 를 추가하여 지도를 움직여도 새로고침되지 않게 막음
         st_folium(m, width="100%", height=500, returned_objects=[])
 
-     # [B] 차트 및 데이터 인사이트 (3단 대시보드 레이아웃으로 고도화)
+        # [B] 차트 및 데이터 인사이트
         st.markdown("---")
         st.subheader("📊 데이터 분석 결과")
         
-        # 화면을 3분할하여 꽉 찬 느낌을 줍니다.
         col_m1, col_m2, col_m3 = st.columns([1, 1, 1])
         
         with col_m1:
             st.markdown("#### 🧭 현재 지수 상태")
-            # 1. 텅 비어보이지 않도록 화려한 게이지(계기판) 차트 추가
             fig_gauge = go.Figure(go.Indicator(
                 mode = "gauge+number",
-                value = avg_val,
-                title = {'text': f"{idx_name} 평균 지수", 'font': {'size': 14}},
+                value = round(avg_val, 4),
+                title = {'text': f"올해 {idx_name} 실측치", 'font': {'size': 14}},
                 gauge = {
                     'axis': {'range': [cfg['min'], cfg['max']]},
                     'bar': {'color': "#2ecc71" if avg_val >= cfg['threshold'] else "#e74c3c"},
@@ -170,7 +186,6 @@ if st.session_state.get('run_triggered', False):
 
         with col_m2:
             st.markdown("#### 📅 전년 대비 비교")
-            # 2. 막대 그래프 디자인 개선
             fig_bar = go.Figure()
             fig_bar.add_trace(go.Bar(
                 x=["전년 동기", "올해 실측"],
@@ -190,16 +205,14 @@ if st.session_state.get('run_triggered', False):
             st.markdown("#### 💡 종합 진단 요약")
             st.markdown("<br>", unsafe_allow_html=True)
             
-            # 3. 데이터가 없을 때도 UI가 깨지지 않도록 Metric 개선
             if last_avg is not None and last_avg != 0:
                 change_rate = ((avg_val - last_avg) / abs(last_avg)) * 100
-                st.metric(label="📈 전년 동기 대비 변화율", value=f"{avg_val:.4f}", delta=f"{change_rate:+.2f}%")
+                st.metric(label=f"🎯 올해 평균 {idx_name}", value=f"{avg_val:.4f}", delta=f"{change_rate:+.2f}% (전년 동기 대비)")
             else:
                 change_rate = 0
-                st.metric(label="📈 전년 동기 대비 변화율", value=f"{avg_val:.4f}", delta="비교 불가 (전년 데이터 없음)", delta_color="off")
+                st.metric(label=f"🎯 올해 평균 {idx_name}", value=f"{avg_val:.4f}", delta="비교 불가 (전년 데이터 없음)", delta_color="off")
                 
             st.markdown("---")
-            # 상태 경고창 디자인
             if avg_val >= cfg['threshold']:
                 st.success(f"**🟢 상태 양호**\n\n{cfg['desc_good']}")
             else:
