@@ -94,6 +94,7 @@ with col_d4:
 # 5. 위성 분석 렌더링 영역
 # -----------------------------------------------------------------
 if run_btn:
+    # 이전에 안전하게 돌아가던 변수 세팅 그대로 유지
     st.session_state.current_mode = analysis_mode
     st.markdown("---")
 
@@ -106,7 +107,7 @@ if run_btn:
         )
         count, stats = get_cached_stats(st.session_state.lat, st.session_state.lon, 3000, str(s_date), str(e_date), cloud_threshold, cfg['bands'], cfg['index_name'])
         
-        # 작년 동기 데이터 호출 (캐싱 적용, 구름 허용률 통일)
+        # 작년 동기 데이터 호출
         ly_start = s_date.replace(year=s_date.year - 1)
         ly_end = e_date.replace(year=e_date.year - 1)
         last_count, last_stats = get_cached_stats(st.session_state.lat, st.session_state.lon, 3000, str(ly_start), str(ly_end), cloud_threshold, cfg['bands'], cfg['index_name'])
@@ -165,28 +166,24 @@ if run_btn:
                 change_rate = 0
                 st.metric(label="전년 동기 대비 변화율", value="비교 데이터 없음")
 
-        # [C] 선택적 엑셀 보고서 다운로드 (아코디언 형태 숨김 처리)
+        # [C] 선택적 엑셀 보고서 다운로드 (아코디언 토글 적용)
         st.markdown("<br>", unsafe_allow_html=True)
         with st.expander("🔽 상세 분석 보고서 다운로드 (Excel)"):
             st.markdown("현재 조회하신 데이터를 바탕으로 문서 첨부용 정식 보고서를 생성합니다.")
             reliability_score = "우수 (95%)" if cloud_threshold <= 25 else "보통 (80%)"
             
-            # 기존 report_builder.py가 한 자 한 자 체크하는 완벽한 옛날 컬럼 명칭 복원
+            # 오리지널 코드의 완벽한 데이터프레임 구조를 그대로 복구
             df_report = pd.DataFrame({
-                "관측 시점": ["전년 동기 평균 (대조군)", f"올해 실측 평균 ({e_date.strftime('%m/%d')})"],
-                f"원격 탐사 지수 ({idx_name})": [round(last_avg, 4) if last_avg is not None else 0.0, round(avg_val, 4)],
+                "관측 시점": ["전년 동기 평균 (대조군)" if last_avg is not None else "전년 동기 데이터 없음", f"올해 실측 평균 ({e_date.strftime('%m/%d')})"],
+                f"원격 탐사 지수 ({idx_name})": [round(last_avg, 4) if last_avg is not None else None, round(avg_val, 4)],
                 "행정 정보 및 안전 진단 통계": [
                     f"관제 지자체: {st.session_state.region_name} / 플랫폼 모드: {st.session_state.current_mode}", 
                     f"전년 동기 대비 변화율: {change_rate:+.2f}% / 위성 데이터 신뢰도: {reliability_score}"
-                ],
-                "최종 분석 및 관리자 가이드": [
-                    f"상태 진단: {cfg['desc_good'] if avg_val >= cfg['threshold'] else cfg['desc_bad']}", 
-                    f"데이터 요약: 총 {count}개의 유효 위성 레이어가 합성되었습니다."
                 ]
             })
             st.dataframe(df_report, hide_index=True)
             
-            # 엑셀 파일 생성
+            # 기존 report_builder.py 모듈 그대로 호환 호출
             excel_data = generate_excel_report(
                 df_report, idx_name, st.session_state.region_name, st.session_state.current_mode, 
                 change_rate, reliability_score, count
