@@ -28,7 +28,7 @@ st.markdown("---")
 # GEE 인증
 gee_ready = init_gee()
 if not gee_ready:
-    st.error("🚨 위성 데이터 서버(GEE) 인증에 실패했습니다. 관리자에게 문의하세요.")
+    st.error("🚨 위성 데이터 서버(GEE) 인증에 실패했습니다. 환경 설정을 확인해주세요.")
     st.stop()
 
 # -----------------------------------------------------------------
@@ -171,19 +171,24 @@ if run_btn:
             st.markdown("현재 조회하신 데이터를 바탕으로 문서 첨부용 정식 보고서를 생성합니다.")
             reliability_score = "우수 (95%)" if cloud_threshold <= 25 else "보통 (80%)"
             
-            # 기존 report_builder.py가 요구하는 4개 열(Column) 규격에 완벽하게 맞춤
+            # 기존 report_builder.py 구조와 완벽 연동 (행 단위 리스트 매칭)
             df_report = pd.DataFrame({
-                "관측 시점": ["전년 동기 평균 (대조군)" if last_avg is not None else "전년 동기 데이터 없음", f"올해 실측 평균 ({e_date.strftime('%m/%d')})"],
-                f"원격 탐사 지수 ({idx_name})": [round(last_avg, 4) if last_avg is not None else None, round(avg_val, 4)],
-                "행정 정보 및 안전 진단 통계": [f"관제 지역: {st.session_state.region_name} / 모드: {analysis_mode}", f"전년 동기 대비 변화율: {change_rate:+.2f}% / 위성 데이터 신뢰도: {reliability_score}"],
-                "최종 분석 및 관리자 가이드": [cfg['desc_good'] if avg_val >= cfg['threshold'] else cfg['desc_bad'], f"총 {count}개의 유효 위성 레이어가 합성되었습니다."]
+                "관측 시점": ["전년 동기 평균 (대조군)", f"올해 실측 평균 ({e_date.strftime('%m/%d')})"],
+                f"원격 탐사 지수 ({idx_name})": [round(last_avg, 4) if last_avg is not None else 0.0, round(avg_val, 4)],
+                "행정 정보 및 안전 진단 통계": [
+                    f"관제 구역: {st.session_state.region_name} / 모드: {st.session_state.current_mode}", 
+                    f"전년 대비 변화율: {change_rate:+.2f}% / 신뢰도: {reliability_score}"
+                ],
+                "최종 분석 및 관리자 가이드": [
+                    cfg['desc_good'] if avg_val >= cfg['threshold'] else cfg['desc_bad'], 
+                    f"총 {count}개의 유효 위성 레이어가 합성되었습니다."
+                ]
             })
-            
             st.dataframe(df_report, hide_index=True)
             
-            # 엑셀 파일 생성 (기존에 쪼개놓은 report_builder.py 모듈 그대로 호출)
+            # 엑셀 파일 생성
             excel_data = generate_excel_report(
-                df_report, idx_name, st.session_state.region_name, analysis_mode, 
+                df_report, idx_name, st.session_state.region_name, st.session_state.current_mode, 
                 change_rate, reliability_score, count
             )
             
