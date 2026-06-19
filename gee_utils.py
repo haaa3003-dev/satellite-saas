@@ -35,19 +35,36 @@ def init_gee():
             except Exception:
                 return False
 
-def _build_index_image(region, start_date, end_date, cloud_threshold, mode_cfg):
-    """공통 합성 이미지 및 지수 빌더 (ee 객체 반환, lazy 연산이라 가벼움)
+def _compute_index_from_image(image, mode_cfg):
+    """단일 ee.Image 한 장에서 지수를 계산하는 공통 로직.
 
-    mode_cfg에 담긴 calc_type에 따라 계산 방식을 분기한다.
-    - normalized_diff : 두 밴드의 정규화 차이 (NDVI/NDWI/NBR 등, Sentinel-2)
-    - single_band      : 단일 밴드 값을 그대로 사용 (예: 대기오염 농도, Sentinel-5P)
-    - thermal_celsius  : Landsat Collection 2 열적외선 밴드를 켈빈→섭씨로 변환
-                          (DN * 0.00341802 + 149.0 → 켈빈, 거기서 -273.15)
+    median 합성 이미지든, 시계열의 개별 이미지 한 장이든 항상 이 함수를
+    거치게 해서 "합성 결과"와 "시계열 점 하나하나"의 계산식이 어긋나지
+    않도록 보장한다 (같은 곳에서 같은 공식을 쓰는 게 원칙).
     """
-    collection_id = mode_cfg['collection']
-    cloud_filter_prop = mode_cfg.get('cloud_filter_prop')
     calc_type = mode_cfg['calc_type']
     index_name = mode_cfg['index_name']
+
+    if calc_type == "normalized_diff":
+        return image.normalizedDifference(mode_cfg['bands']).rename(index_name)
+    elif calc_type == "single_band":
+        return image.select(mode_cfg['band']).rename(index_name)
+    elif calc_type == "thermal_celsius":
+        return (
+            image.select(mode_cfg['band'])
+            .multiply(0.00341802)
+            .add(149.0)
+            .subtract(273.15)
+            .rename(index_name)
+        )
+    else:
+        raise ValueError(f"알 수 없는 calc_type: {calc_type}")
+
+
+def _filtered_collection(region, start_date, end_date, cloud_threshold, mode_cfg):
+    """공통 컬렉션 필터링 (위치/기간/구름기준)"""
+    collection_id = mode_cfg['collection']
+    cloud_filter_prop = mode_cfg.get('cloud_filter_prop')
 
     collection = (
         ee.ImageCollection(collection_id)
@@ -58,24 +75,21 @@ def _build_index_image(region, start_date, end_date, cloud_threshold, mode_cfg):
     # CLOUD_COVER) 아예 없을 수 있어서(Sentinel-5P 대기 데이터 등) 선택적으로 적용
     if cloud_filter_prop:
         collection = collection.filter(ee.Filter.lt(cloud_filter_prop, cloud_threshold))
+    return collection
 
+
+def _build_index_image(region, start_date, end_date, cloud_threshold, mode_cfg):
+    """공통 합성 이미지 및 지수 빌더 (ee 객체 반환, lazy 연산이라 가벼움)
+
+    mode_cfg에 담긴 calc_type에 따라 계산 방식을 분기한다.
+    - normalized_diff : 두 밴드의 정규화 차이 (NDVI/NDWI/NBR 등, Sentinel-2)
+    - single_band      : 단일 밴드 값을 그대로 사용 (예: 대기오염 농도, Sentinel-5P)
+    - thermal_celsius  : Landsat Collection 2 열적외선 밴드를 켈빈→섭씨로 변환
+                          (DN * 0.00341802 + 149.0 → 켈빈, 거기서 -273.15)
+    """
+    collection = _filtered_collection(region, start_date, end_date, cloud_threshold, mode_cfg)
     image = collection.median()
-
-    if calc_type == "normalized_diff":
-        calculated_index = image.normalizedDifference(mode_cfg['bands']).rename(index_name)
-    elif calc_type == "single_band":
-        calculated_index = image.select(mode_cfg['band']).rename(index_name)
-    elif calc_type == "thermal_celsius":
-        calculated_index = (
-            image.select(mode_cfg['band'])
-            .multiply(0.00341802)
-            .add(149.0)
-            .subtract(273.15)
-            .rename(index_name)
-        )
-    else:
-        raise ValueError(f"알 수 없는 calc_type: {calc_type}")
-
+    calculated_index = _compute_index_from_image(image, mode_cfg)
     return collection, image, calculated_index
 
 
@@ -118,6 +132,48 @@ def get_satellite_index_for_period(region, start_date, end_date, cloud_threshold
     """타일 렌더링용 ee 이미지/인덱스 객체 반환 (캐싱 불가, 매번 새로 빌드)"""
     _, image, calculated_index = _build_index_image(region, start_date, end_date, cloud_threshold, mode_cfg)
     return image, calculated_index
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_time_series(lat, lon, buffer_m, start_date, end_date, cloud_threshold, mode_cfg):
+    """선택 기간 내 개별 위성 촬영분마다 (날짜, 평균값)을 계산해 반환한다.
+
+    [중요] 이건 예측이 아니라 100% 실측 시계열이다. median()으로 기간을
+    하나로 뭉개는 대신, 컬렉션 안의 이미지 한 장 한 장에 대해
+    날짜와 평균값을 서버에서 미리 계산(.map())해서, getInfo() 호출을
+    딱 한 번만 날린다 (이미지 개수만큼 왕복하지 않음 — 비용 절약).
+    """
+    region = ee.Geometry.Point([lon, lat]).buffer(buffer_m)
+    collection = _filtered_collection(region, start_date, end_date, cloud_threshold, mode_cfg)
+    index_name = mode_cfg['index_name']
+
+    def _reduce_single(image):
+        idx_img = _compute_index_from_image(image, mode_cfg)
+        mean_val = idx_img.reduceRegion(
+            reducer=ee.Reducer.mean(), geometry=region, scale=10
+        ).get(index_name)
+        return ee.Feature(None, {
+            'date': image.date().format('YYYY-MM-dd'),
+            'value': mean_val
+        })
+
+    try:
+        features = collection.map(_reduce_single).getInfo().get('features', [])
+    except Exception:
+        return []
+
+    series = []
+    for f in features:
+        props = f.get('properties', {})
+        val = props.get('value')
+        date_str = props.get('date')
+        if val is not None and date_str is not None and isinstance(val, (int, float)):
+            series.append((date_str, val))
+
+    # 같은 날짜에 타일이 여러 장 잡히는 경우가 있어 날짜순으로 정렬
+    series.sort(key=lambda x: x[0])
+    return series
+
 
 def get_ee_tile_url(ee_image_object, vis_params):
     """GEE 지도 레이어 타일 URL 반환"""

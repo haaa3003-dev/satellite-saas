@@ -10,7 +10,7 @@ import traceback  # 에러 트래킹용
 
 # 핵심 커스텀 모듈 임포트
 from mode_config import mode_config, preset_coords
-from gee_utils import init_gee, get_satellite_index_for_period, get_cached_stats, get_ee_tile_url
+from gee_utils import init_gee, get_satellite_index_for_period, get_cached_stats, get_time_series, get_ee_tile_url
 from geocoding import geocode_place
 from report_builder import generate_excel_report
 
@@ -177,6 +177,13 @@ if run_btn:
                 std_val = get_safe_value(stats, idx_key, "stdDev")
                 last_avg = get_safe_value(last_stats, idx_key, "mean") if last_count > 0 else None
 
+                # [확장 2] 기간 내 실측 시계열 — 100% 실측치, 예측 없음.
+                # 개별 위성 촬영분마다의 (날짜, 평균값)을 가져온다.
+                time_series = get_time_series(
+                    st.session_state.lat, st.session_state.lon, 3000,
+                    str(s_date), str(e_date), cloud_threshold, cfg
+                )
+
                 # 렌더링에 필요한 지도 URL 생성 (여기서 한 번만 호출)
                 vis_params = {'min': cfg['min'], 'max': cfg['max'], 'palette': cfg['palette']}
                 tile_url = get_ee_tile_url(calculated_index, vis_params) if count > 0 else None
@@ -189,6 +196,7 @@ if run_btn:
                     'max_val': max_val,
                     'std_val': std_val,
                     'last_avg': last_avg,
+                    'time_series': time_series,
                     'tile_url': tile_url,
                     'idx_name': cfg['index_name'],
                     'region_name': st.session_state.region_name,
@@ -314,6 +322,43 @@ if 'analysis_res' in st.session_state:
                 st.caption(f"📊 구역 내 수치 편차가 다소 있습니다 (변동계수 {uniformity_ratio:.2f}). 일부 구간에서 평균과 다른 상태가 섞여 있을 수 있습니다.")
             else:
                 st.caption(f"📊 구역 내 수치 편차가 큽니다 (변동계수 {uniformity_ratio:.2f}). 평균만으로는 안 보이는 국지적 이상이 있을 가능성이 있어, 지도에서 구체적 위치를 같이 확인하는 걸 권장합니다.")
+
+        # [확장 2] 기간 내 실측 시계열 그래프.
+        # 선택한 기간을 median()으로 뭉갠 점 하나가 아니라, 그 기간 안에
+        # 실제로 촬영된 위성 이미지마다의 평균값을 점으로 찍는다.
+        # [중요] 추세선 연장이나 미래 추정은 절대 하지 않는다 — 전부 과거
+        # 실측치다. (예전에 뺐던 "14일 예측" 기능과는 본질적으로 다름)
+        st.markdown("---")
+        st.subheader("📈 기간 내 실측 추이")
+        time_series = res.get('time_series') or []
+
+        if len(time_series) < 2:
+            st.caption("ℹ️ 선택한 기간 내 유효한 위성 촬영분이 2건 미만이라 추이 그래프를 표시할 수 없습니다. 기간을 넓혀보세요.")
+        else:
+            ts_dates = [d for d, v in time_series]
+            ts_values = [v for d, v in time_series]
+
+            fig_ts = go.Figure()
+            fig_ts.add_trace(go.Scatter(
+                x=ts_dates, y=ts_values,
+                mode='lines+markers',
+                name=f"{res['idx_name']} 실측치",
+                line=dict(color="#3498db", width=2),
+                marker=dict(size=8)
+            ))
+            fig_ts.add_hline(
+                y=res['cfg']['threshold'], line_dash="dash", line_color="red",
+                annotation_text="기준선", annotation_position="top right"
+            )
+            fig_ts.update_layout(
+                height=300,
+                margin=dict(l=20, r=20, t=30, b=20),
+                yaxis_title=f"{res['idx_name']} 지수",
+                xaxis_title="촬영일",
+                yaxis=dict(range=[res['cfg']['min'] - 0.1, res['cfg']['max'] + 0.1])
+            )
+            st.plotly_chart(fig_ts, use_container_width=True)
+            st.caption(f"ℹ️ 선택 기간 내 유효 촬영분 {len(time_series)}건의 실측 평균값입니다. (예측·추정 없음, 100% 실측 데이터)")
 
         # [C] 엑셀 보고서 다운로드
         st.markdown("<br>", unsafe_allow_html=True)
