@@ -219,7 +219,11 @@ if run_btn:
 
                 # 렌더링에 필요한 지도 URL 생성 (여기서 한 번만 호출)
                 vis_params = {'min': cfg['min'], 'max': cfg['max'], 'palette': cfg['palette']}
-                tile_url = get_ee_tile_url(calculated_index, vis_params) if count > 0 else None
+                # [버그 수정] clip() 없이 그대로 타일을 만들면 버퍼 영역이 아니라
+                # 위성이 한 번에 찍는 원본 장면 전체(Landsat은 가로 약 185km)가
+                # 그대로 지도에 깔려서 엉뚱하게 넓은 영역이 보이는 문제가 있었다.
+                # 반드시 region(3km 반경 버퍼)으로 잘라낸 뒤 타일을 생성한다.
+                tile_url = get_ee_tile_url(calculated_index.clip(region), vis_params) if count > 0 else None
 
                 # 세션에 최종 결과 딕셔너리로 저장
                 st.session_state.analysis_res = {
