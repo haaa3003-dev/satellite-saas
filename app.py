@@ -13,6 +13,7 @@ from mode_config import mode_config, preset_coords
 from gee_utils import init_gee, get_satellite_index_for_period, get_cached_stats, get_time_series, get_ee_tile_url
 from geocoding import geocode_place
 from report_builder import generate_excel_report
+from cross_diagnosis import find_cross_pairs_for_mode
 
 # 1. 페이지 테마 설정 (오픈 데이터 포털 느낌)
 st.set_page_config(page_title="K-Sat 오픈 탐색기", page_icon="🌍", layout="wide")
@@ -184,6 +185,38 @@ if run_btn:
                     str(s_date), str(e_date), cloud_threshold, cfg
                 )
 
+                # [확장 3] 교차 진단 — 짝지어진 모드가 있으면 같은 위치/기간으로
+                # 한 번 더 통계를 가져와서 두 지수를 함께 해석한다.
+                # (예: NDVI 낮음 + NDWI 낮음 = 가뭄 의심, NDVI 낮음 + NDWI 높음 = 침수 의심)
+                cross_results = []
+                for current_key, partner_key, label, interpret_fn in find_cross_pairs_for_mode(analysis_mode):
+                    partner_cfg = mode_config[partner_key]
+                    p_count, p_stats = get_cached_stats(
+                        st.session_state.lat, st.session_state.lon, 3000,
+                        str(s_date), str(e_date), cloud_threshold, partner_cfg
+                    )
+                    if p_count == 0:
+                        cross_results.append({
+                            'label': label, 'partner_mode': partner_key,
+                            'available': False
+                        })
+                        continue
+                    partner_idx_key = partner_cfg['index_name']
+                    partner_avg = get_safe_value(p_stats, partner_idx_key, "mean")
+                    if partner_avg is None:
+                        cross_results.append({
+                            'label': label, 'partner_mode': partner_key,
+                            'available': False
+                        })
+                        continue
+                    title, desc = interpret_fn(avg_val, cfg, partner_avg, partner_cfg)
+                    cross_results.append({
+                        'label': label, 'partner_mode': partner_key,
+                        'available': True,
+                        'partner_avg': partner_avg,
+                        'title': title, 'desc': desc
+                    })
+
                 # 렌더링에 필요한 지도 URL 생성 (여기서 한 번만 호출)
                 vis_params = {'min': cfg['min'], 'max': cfg['max'], 'palette': cfg['palette']}
                 tile_url = get_ee_tile_url(calculated_index, vis_params) if count > 0 else None
@@ -197,6 +230,7 @@ if run_btn:
                     'std_val': std_val,
                     'last_avg': last_avg,
                     'time_series': time_series,
+                    'cross_results': cross_results,
                     'tile_url': tile_url,
                     'idx_name': cfg['index_name'],
                     'region_name': st.session_state.region_name,
@@ -243,6 +277,15 @@ if 'analysis_res' in st.session_state:
 
         col_m1, col_m2, col_m3 = st.columns([1, 1, 1])
 
+        # [버그 수정] NO2/LST처럼 "수치가 높을수록 나쁜" 모드가 추가되면서,
+        # 기존의 "avg_val >= threshold면 무조건 양호"라는 단방향 로직이
+        # NO2/LST에서는 정반대로 판정하는 버그가 있었다. higher_is_worse
+        # 플래그를 보고 방향을 뒤집어서 판단하는 헬퍼로 통일했다.
+        def is_good_value(val, cfg_dict):
+            if cfg_dict.get('higher_is_worse', False):
+                return val < cfg_dict['threshold']
+            return val >= cfg_dict['threshold']
+
         with col_m1:
             st.markdown("#### 🧭 현재 지수 상태")
             fig_gauge = go.Figure(go.Indicator(
@@ -251,7 +294,7 @@ if 'analysis_res' in st.session_state:
                 title={'text': f"올해 {res['idx_name']} 실측치", 'font': {'size': 14}},
                 gauge={
                     'axis': {'range': [res['cfg']['min'], res['cfg']['max']]},
-                    'bar': {'color': "#2ecc71" if res['avg_val'] >= res['cfg']['threshold'] else "#e74c3c"},
+                    'bar': {'color': "#2ecc71" if is_good_value(res['avg_val'], res['cfg']) else "#e74c3c"},
                     'threshold': {
                         'line': {'color': "red", 'width': 3},
                         'thickness': 0.75,
@@ -268,7 +311,7 @@ if 'analysis_res' in st.session_state:
             fig_bar.add_trace(go.Bar(
                 x=["전년 동기", "올해 실측"],
                 y=[res['last_avg'] if res['last_avg'] is not None else 0, res['avg_val']],
-                marker_color=['#bdc3c7', '#3498db' if res['avg_val'] >= res['cfg']['threshold'] else '#e74c3c'],
+                marker_color=['#bdc3c7', '#3498db' if is_good_value(res['avg_val'], res['cfg']) else '#e74c3c'],
                 text=[f"{res['last_avg']:.4f}" if res['last_avg'] is not None else "데이터 없음", f"{res['avg_val']:.4f}"],
                 textposition='auto'
             ))
@@ -291,7 +334,7 @@ if 'analysis_res' in st.session_state:
                 st.metric(label=f"🎯 올해 평균 {res['idx_name']}", value=f"{res['avg_val']:.4f}", delta="비교 불가 (전년 데이터 없음)", delta_color="off")
 
             st.markdown("---")
-            if res['avg_val'] >= res['cfg']['threshold']:
+            if is_good_value(res['avg_val'], res['cfg']):
                 st.success(f"**🟢 상태 양호**\n\n{res['cfg']['desc_good']}")
             else:
                 st.error(f"**🔴 주의 요망**\n\n{res['cfg']['desc_bad']}")
@@ -359,6 +402,24 @@ if 'analysis_res' in st.session_state:
             )
             st.plotly_chart(fig_ts, use_container_width=True)
             st.caption(f"ℹ️ 선택 기간 내 유효 촬영일 {len(time_series)}개 날짜의 실측 평균값입니다. (같은 날짜 중복 촬영분은 평균으로 합침 / 예측·추정 없음, 100% 실측 데이터)")
+
+        # [확장 3] 교차 진단 — 짝지어진 다른 지수와 함께 봤을 때의 해석.
+        # 한 지수만으로는 구분 안 되는 원인(가뭄 vs 침수, 산불 vs 다른 원인,
+        # 열섬 vs 대기오염)을 두 지수 조합으로 좁혀준다.
+        cross_results = res.get('cross_results') or []
+        if cross_results:
+            st.markdown("---")
+            st.subheader("🔬 교차 진단")
+            for cr in cross_results:
+                with st.container(border=True):
+                    st.markdown(f"**{cr['label']}** · 짝 지표: {cr['partner_mode']}")
+                    if not cr['available']:
+                        st.caption("⚠️ 짝 지표의 위성 데이터를 가져올 수 없어 교차 진단을 표시할 수 없습니다.")
+                    else:
+                        st.markdown(f"#### {cr['title']}")
+                        st.caption(cr['desc'])
+                        st.caption(f"(짝 지표 실측 평균: {cr['partner_avg']:.4f})")
+            st.caption("ℹ️ 교차 진단은 두 지수의 경향을 함께 본 참고용 해석이며, 현장 확인을 대체하지 않습니다.")
 
         # [C] 엑셀 보고서 다운로드
         st.markdown("<br>", unsafe_allow_html=True)

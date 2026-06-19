@@ -8,7 +8,7 @@ mode_config = {
         "cloud_filter_prop": "CLOUDY_PIXEL_PERCENTAGE",
         "bands": ['B8', 'B4'], "index_name": "NDVI", "label": "식생활성도",
         "palette": ['red', 'yellow', 'green'], "min": 0.0, "max": 1.0, "anomaly_min": -0.3, "anomaly_max": 0.3,
-        "threshold": 0.4, "baseline": 0.15, "ceil": 0.85,
+        "threshold": 0.4, "baseline": 0.15, "ceil": 0.85, "higher_is_worse": False,
         "desc_good": "지표면의 식생 활성도가 기준치(0.4)를 상회합니다. 작물이 정상적인 성장 주기에 안착하여 활발히 생육 중임이 증명되었습니다.",
         "desc_bad": "식생지수가 다소 낮게 모니터링됩니다. 초기 파종/모내기로 인한 수면 노출이거나 가뭄, 병해충으로 인한 생육 지연일 가능성이 있습니다.",
         "ai_good": "안정적인 생육 상태를 유지하며 우수한 수확권에 진입할 것으로 분석됩니다.",
@@ -20,7 +20,7 @@ mode_config = {
         "cloud_filter_prop": "CLOUDY_PIXEL_PERCENTAGE",
         "bands": ['B3', 'B8'], "index_name": "NDWI", "label": "수분포화도",
         "palette": ['white', '#99ccff', 'blue'], "min": -0.5, "max": 0.8, "anomaly_min": -0.4, "anomaly_max": 0.4,
-        "threshold": 0.1, "baseline": -0.40, "ceil": 0.75,
+        "threshold": 0.1, "baseline": -0.40, "ceil": 0.75, "higher_is_worse": False,
         "desc_good": "해당 구역의 수분포화도가 높습니다. 대형 저수지의 저수율이 풍부하거나 호우로 인한 지표면 침수 및 하천 범람 구역일 수 있습니다.",
         "desc_bad": "수분포화도가 마이너스권을 기록합니다. 수자원이 고갈되어 가뭄 징후가 보이거나 건조한 나대지 상태를 나타냅니다.",
         "ai_good": "수량이 유지되거나 과포화 상태가 지속될 것으로 예측되므로 침수 취약 지역은 배수 시설 점검이 필요합니다.",
@@ -32,7 +32,7 @@ mode_config = {
         "cloud_filter_prop": "CLOUDY_PIXEL_PERCENTAGE",
         "bands": ['B8', 'B12'], "index_name": "NBR", "label": "탄화흔적도",
         "palette": ['#331a00', 'yellow', 'darkgreen'], "min": -0.4, "max": 0.8, "anomaly_min": -0.5, "anomaly_max": 0.5,
-        "threshold": 0.15, "baseline": -0.30, "ceil": 0.80,
+        "threshold": 0.15, "baseline": -0.30, "ceil": 0.80, "higher_is_worse": False,
         "desc_good": "탄화흔적이 없는 깨끗하고 푸른 산림 상태를 나타냅니다. 산림 자원의 건강성이 아주 우수하게 유지되고 있습니다.",
         "desc_bad": "지수가 급격한 마이너스로 추락했습니다. 최근 산불 재해로 인해 지표면이 까맣게 타버린 '탄화 흔적지'이거나 급격한 산림 훼손 구역입니다.",
         "ai_good": "재해 징후 없이 산림의 건강도 지표가 향후에도 안정적으로 복원/유지될 것으로 전망됩니다.",
@@ -57,6 +57,8 @@ mode_config = {
         "palette": ['black', 'blue', 'purple', 'cyan', 'green', 'yellow', 'red'],  # GEE 공식 예제 팔레트
         "min": 0.0, "max": 0.0002,  # mol/m^2, GEE 공식 예제 시각화 범위
         "threshold": 0.00007,  # [추정치] 공식 규제 기준 아님, 검증 필요
+        "higher_is_worse": True,  # [수정] NO2는 수치가 높을수록 나쁨 (기존엔 이 방향 구분이 없어서
+                                   # 높은 농도일 때도 "양호"로 잘못 표시되는 버그가 있었음)
         "desc_good": "대기 오염 물질 농도가 낮아 광역적인 공기질 트렌드가 양호한 상태입니다. (해상도: 약 3.5~7km 단위 관측이라 필지 단위가 아닌 광역 트렌드용입니다)",
         "desc_bad": "이산화질소 등 오염 물질 농도가 높게 관측됩니다. 특정 필지가 아닌 해당 지역 전체의 광역 대기질 악화를 의미합니다. (해상도: 약 3.5~7km 단위 관측)"
     },
@@ -69,6 +71,7 @@ mode_config = {
         "palette": ['#042333', '#2c3359', '#4d3d75', '#76448a', '#a4468f', '#cf4c7e', '#eb6361', '#f78b40', '#f4b925', '#e9f00a'],
         "min": 20.0, "max": 45.0,  # 섭씨, thermal_celsius 변환 후 기준
         "threshold": 35.0,  # [추정치] 공식 폭염 기준 아님, 검증 필요
+        "higher_is_worse": True,  # [수정] LST도 수치가 높을수록(고온일수록) 나쁨
         "desc_good": "지표면 온도가 정상 범위 내에 있어 열섬 현상이 덜합니다. (해상도: 약 30m 단위 관측)",
         "desc_bad": "국지적인 지표면 온도가 매우 높게 관측됩니다. 빌딩 밀집 구역이나 아스팔트로 인한 도심 열섬 현상에 주의가 필요합니다. (해상도: 약 30m 단위 관측)"
     }
