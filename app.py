@@ -358,7 +358,7 @@ if 'analysis_res' in st.session_state:
                 yaxis=dict(range=[res['cfg']['min'] - 0.1, res['cfg']['max'] + 0.1])
             )
             st.plotly_chart(fig_ts, use_container_width=True)
-            st.caption(f"ℹ️ 선택 기간 내 유효 촬영분 {len(time_series)}건의 실측 평균값입니다. (예측·추정 없음, 100% 실측 데이터)")
+            st.caption(f"ℹ️ 선택 기간 내 유효 촬영일 {len(time_series)}개 날짜의 실측 평균값입니다. (같은 날짜 중복 촬영분은 평균으로 합침 / 예측·추정 없음, 100% 실측 데이터)")
 
         # [C] 엑셀 보고서 다운로드
         st.markdown("<br>", unsafe_allow_html=True)

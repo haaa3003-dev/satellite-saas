@@ -170,9 +170,19 @@ def get_time_series(lat, lon, buffer_m, start_date, end_date, cloud_threshold, m
         if val is not None and date_str is not None and isinstance(val, (int, float)):
             series.append((date_str, val))
 
-    # 같은 날짜에 타일이 여러 장 잡히는 경우가 있어 날짜순으로 정렬
-    series.sort(key=lambda x: x[0])
-    return series
+    # [개선] 같은 날짜에 인접 궤도 중복 촬영이 잡히는 경우가 있어
+    # (예: Sentinel-2가 같은 날 다른 궤도에서 두 번 지나가는 경우),
+    # 날짜별로 평균을 내서 날짜당 점 하나씩만 남긴다.
+    by_date = {}
+    for date_str, val in series:
+        by_date.setdefault(date_str, []).append(val)
+
+    merged = [
+        (date_str, sum(vals) / len(vals))
+        for date_str, vals in by_date.items()
+    ]
+    merged.sort(key=lambda x: x[0])
+    return merged
 
 
 def get_ee_tile_url(ee_image_object, vis_params):
