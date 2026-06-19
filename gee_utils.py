@@ -93,8 +93,16 @@ def get_cached_stats(lat, lon, buffer_m, start_date, end_date, cloud_threshold, 
         return 0, None
 
     try:
+        # [확장] mean만이 아니라 min/max/stdDev까지 한 번의 reduceRegion 호출로 가져온다.
+        # 같은 평균이라도 표준편차가 크면 "필지 일부에 국지적 문제 발생 가능성"처럼
+        # 더 구체적인 해석이 가능해진다. (호출 횟수는 그대로 1번 — 비용 증가 없음)
+        combined_reducer = (
+            ee.Reducer.mean()
+            .combine(ee.Reducer.minMax(), sharedInputs=True)
+            .combine(ee.Reducer.stdDev(), sharedInputs=True)
+        )
         stats = calculated_index.reduceRegion(
-            reducer=ee.Reducer.mean().combine(ee.Reducer.max(), sharedInputs=True),
+            reducer=combined_reducer,
             geometry=region,
             scale=10
         ).getInfo()

@@ -162,14 +162,20 @@ if run_btn:
                 # 반환한다. (제미나이 버전의 "base_key로 시작하는 첫 값" fallback은
                 # "NDVI_max"도 "NDVI"로 시작하기 때문에, _mean이 없는 비정상 상황에서
                 # 최댓값을 평균인 것처럼 잘못 가져올 수 있는 위험이 남아있었음)
-                def get_safe_value(stat_dict, base_key):
+                # [확장] stat_suffix를 인자로 받아 mean/min/max/stdDev 모두 같은
+                # 방식으로 정확한 키만 신뢰하고 가져올 수 있게 했다.
+                def get_safe_value(stat_dict, base_key, stat_suffix="mean"):
                     if not stat_dict or not isinstance(stat_dict, dict):
                         return None
-                    val = stat_dict.get(f"{base_key}_mean")
+                    val = stat_dict.get(f"{base_key}_{stat_suffix}")
                     return val if isinstance(val, (int, float)) else None
 
-                avg_val = get_safe_value(stats, cfg['index_name']) or 0.0
-                last_avg = get_safe_value(last_stats, cfg['index_name']) if last_count > 0 else None
+                idx_key = cfg['index_name']
+                avg_val = get_safe_value(stats, idx_key, "mean") or 0.0
+                min_val = get_safe_value(stats, idx_key, "min")
+                max_val = get_safe_value(stats, idx_key, "max")
+                std_val = get_safe_value(stats, idx_key, "stdDev")
+                last_avg = get_safe_value(last_stats, idx_key, "mean") if last_count > 0 else None
 
                 # 렌더링에 필요한 지도 URL 생성 (여기서 한 번만 호출)
                 vis_params = {'min': cfg['min'], 'max': cfg['max'], 'palette': cfg['palette']}
@@ -179,6 +185,9 @@ if run_btn:
                 st.session_state.analysis_res = {
                     'count': count,
                     'avg_val': avg_val,
+                    'min_val': min_val,
+                    'max_val': max_val,
+                    'std_val': std_val,
                     'last_avg': last_avg,
                     'tile_url': tile_url,
                     'idx_name': cfg['index_name'],
@@ -279,6 +288,33 @@ if 'analysis_res' in st.session_state:
             else:
                 st.error(f"**🔴 주의 요망**\n\n{res['cfg']['desc_bad']}")
 
+        # [확장 1] 평균값 하나로는 안 보이던 "구역 내 균일성"을 보여주는
+        # 최소/최대/표준편차 패널. 같은 평균이라도 표준편차가 크면
+        # 구역 내 일부만 국지적으로 문제가 있을 가능성을 시사한다.
+        st.markdown("---")
+        st.subheader("📐 구역 내 분포 통계")
+        std_val = res.get('std_val')
+        min_val = res.get('min_val')
+        max_val = res.get('max_val')
+
+        col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+        col_s1.metric("평균", f"{res['avg_val']:.4f}")
+        col_s2.metric("최솟값", f"{min_val:.4f}" if min_val is not None else "—")
+        col_s3.metric("최댓값", f"{max_val:.4f}" if max_val is not None else "—")
+        col_s4.metric("표준편차", f"{std_val:.4f}" if std_val is not None else "—")
+
+        # 표준편차 기반 균일성 해석 (실측값만으로 계산되는 규칙 기반 문구,
+        # 추정 임계값이 아니라 "평균 대비 표준편차 비율"이라는 상대적 지표라
+        # 모드별 절대 임계값보다 신뢰도가 높음)
+        if std_val is not None and abs(res['avg_val']) > 1e-6:
+            uniformity_ratio = std_val / abs(res['avg_val'])
+            if uniformity_ratio < 0.15:
+                st.caption(f"📊 구역 내 수치가 비교적 균일합니다 (변동계수 {uniformity_ratio:.2f}). 전체적으로 고른 상태로 추정됩니다.")
+            elif uniformity_ratio < 0.4:
+                st.caption(f"📊 구역 내 수치 편차가 다소 있습니다 (변동계수 {uniformity_ratio:.2f}). 일부 구간에서 평균과 다른 상태가 섞여 있을 수 있습니다.")
+            else:
+                st.caption(f"📊 구역 내 수치 편차가 큽니다 (변동계수 {uniformity_ratio:.2f}). 평균만으로는 안 보이는 국지적 이상이 있을 가능성이 있어, 지도에서 구체적 위치를 같이 확인하는 걸 권장합니다.")
+
         # [C] 엑셀 보고서 다운로드
         st.markdown("<br>", unsafe_allow_html=True)
         with st.expander("🔽 상세 분석 보고서 다운로드 (Excel)"):
@@ -287,11 +323,20 @@ if 'analysis_res' in st.session_state:
             change_rate_display = f"{change_rate:+.2f}%" if change_rate is not None else "비교 불가 (전년 데이터 없음)"
 
             df_report = pd.DataFrame({
-                "관측 시점": ["전년 동기 평균 (대조군)" if res['last_avg'] is not None else "전년 동기 데이터 없음", f"올해 실측 평균 ({res['e_date'].strftime('%m/%d')})"],
-                f"원격 탐사 지수 ({res['idx_name']})": [round(res['last_avg'], 4) if res['last_avg'] is not None else None, round(res['avg_val'], 4)],
+                "관측 시점": [
+                    "전년 동기 평균 (대조군)" if res['last_avg'] is not None else "전년 동기 데이터 없음",
+                    f"올해 실측 평균 ({res['e_date'].strftime('%m/%d')})",
+                    "구역 내 분포 통계 (표준편차)"
+                ],
+                f"원격 탐사 지수 ({res['idx_name']})": [
+                    round(res['last_avg'], 4) if res['last_avg'] is not None else None,
+                    round(res['avg_val'], 4),
+                    round(res['std_val'], 4) if res.get('std_val') is not None else None
+                ],
                 "행정 정보 및 안전 진단 통계": [
                     f"관제 지자체: {res['region_name']} / 플랫폼 모드: {res['mode']}",
-                    f"전년 동기 대비 변화율: {change_rate_display} / 위성 데이터 신뢰도: {res['reliability']}"
+                    f"전년 동기 대비 변화율: {change_rate_display} / 위성 데이터 신뢰도: {res['reliability']}",
+                    f"구역 내 최솟값: {res['min_val']:.4f} / 최댓값: {res['max_val']:.4f}" if res.get('min_val') is not None and res.get('max_val') is not None else "구역 내 최소/최댓값 데이터 없음"
                 ]
             })
             st.dataframe(df_report, hide_index=True)
