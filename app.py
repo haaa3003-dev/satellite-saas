@@ -47,6 +47,7 @@ from geocoding import geocode_place
 from gee_utils import (
     get_change_detection_tile_url,
     get_hotspots,
+    get_multi_point_stats,
     get_seasonal_trend,
     init_gee,
 )
@@ -247,11 +248,12 @@ avg_display = cur.mean if cur.mean is not None else 0.0
 st.markdown("---")
 
 # ── 탭 구성 ───────────────────────────────────────────────────────────────────
-tab_main, tab_change, tab_seasonal, tab_hotspot = st.tabs([
+tab_main, tab_change, tab_seasonal, tab_hotspot, tab_multi = st.tabs([
     "📊 기본 분석",
     "🔄 변화 탐지",
     "📅 계절 트렌드",
     "🎯 핫스팟",
+    "📍 다중 지점 비교",
 ])
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -703,3 +705,245 @@ with tab_hotspot:
                 "ℹ️ 핫스팟은 구역 내 샘플링된 픽셀 중 상위/하위 지점입니다. "
                 "현장 확인의 우선순위 참고용이며 정밀 위치는 직접 검증이 필요합니다."
             )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 5 — 다중 지점 동시 비교
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_multi:
+    import pandas as pd
+
+    st.subheader("📍 다중 지점 동시 비교")
+    st.caption(
+        "최대 5개 지점을 등록하고 같은 기간·같은 모드로 나란히 비교합니다. "
+        "지자체 관할 구역 여러 곳을 한 번에 모니터링하거나 "
+        "개발 전·후 여러 필지를 동시에 추적할 때 활용하세요."
+    )
+
+    # ── 지점 등록 UI ──────────────────────────────────────────────────────────
+    st.markdown("#### 📌 비교 지점 등록 (최대 5개)")
+
+    # 세션에 지점 목록 유지
+    if "multi_points" not in st.session_state:
+        # 현재 분석 중인 지점을 기본값으로 등록
+        st.session_state.multi_points = [
+            {"name": region_name[:20], "lat": lat, "lon": lon}
+        ]
+
+    # 지점 추가 폼
+    with st.expander("➕ 새 지점 추가", expanded=len(st.session_state.multi_points) < 2):
+        col_add1, col_add2 = st.columns([2, 1])
+        with col_add1:
+            new_name = st.text_input(
+                "지점 이름",
+                placeholder="예: 전북 김제시 부량면",
+                key="multi_new_name",
+            )
+            new_search = st.text_input(
+                "지명 검색 (입력 후 Enter)",
+                placeholder="예: 새만금, 당진평야",
+                key="multi_search",
+            )
+        with col_add2:
+            new_lat = st.number_input("위도", value=37.5665, format="%.4f", key="multi_lat")
+            new_lon = st.number_input("경도", value=126.9780, format="%.4f", key="multi_lon")
+
+        # 지명 검색으로 좌표 자동 입력
+        if new_search:
+            try:
+                geo_results = geocode_place(new_search)
+                if geo_results:
+                    found_lat, found_lon, found_name = geo_results[0]
+                    st.info(f"✅ 검색 결과: {found_name[:40]}")
+                    st.session_state["multi_lat"] = found_lat
+                    st.session_state["multi_lon"] = found_lon
+                    if not new_name:
+                        st.session_state["multi_new_name"] = found_name[:20]
+            except NetworkError:
+                st.warning("⚠️ 지명 검색에 실패했습니다. 직접 좌표를 입력해주세요.")
+
+        add_btn = st.button("➕ 지점 추가", key="multi_add_btn")
+        if add_btn:
+            if len(st.session_state.multi_points) >= 5:
+                st.warning("⚠️ 최대 5개까지 등록할 수 있습니다.")
+            elif not new_name.strip():
+                st.warning("⚠️ 지점 이름을 입력해주세요.")
+            else:
+                st.session_state.multi_points.append({
+                    "name": new_name.strip()[:20],
+                    "lat": new_lat,
+                    "lon": new_lon,
+                })
+                st.rerun()
+
+    # ── 등록된 지점 목록 ──────────────────────────────────────────────────────
+    st.markdown(f"**현재 등록된 지점 ({len(st.session_state.multi_points)}개)**")
+
+    to_delete = None
+    for i, pt in enumerate(st.session_state.multi_points):
+        col_pt1, col_pt2, col_pt3, col_pt4 = st.columns([3, 2, 2, 1])
+        col_pt1.markdown(f"**{i+1}. {pt['name']}**")
+        col_pt2.caption(f"위도 {pt['lat']:.4f}")
+        col_pt3.caption(f"경도 {pt['lon']:.4f}")
+        if col_pt4.button("🗑️", key=f"del_{i}", help="지점 삭제"):
+            to_delete = i
+
+    if to_delete is not None:
+        st.session_state.multi_points.pop(to_delete)
+        st.rerun()
+
+    # ── 비교 실행 ─────────────────────────────────────────────────────────────
+    st.markdown("---")
+    if len(st.session_state.multi_points) < 2:
+        st.info("ℹ️ 비교하려면 지점이 2개 이상 필요합니다. 위에서 지점을 추가해주세요.")
+    else:
+        multi_btn = st.button(
+            f"📊 {len(st.session_state.multi_points)}개 지점 동시 비교 실행",
+            type="primary",
+            key="multi_run_btn",
+        )
+
+        if multi_btn:
+            points_tuple = tuple(
+                (pt["lat"], pt["lon"], pt["name"])
+                for pt in st.session_state.multi_points
+            )
+            with st.spinner(f"{len(st.session_state.multi_points)}개 지점 분석 중... 잠시만 기다려주세요."):
+                multi_results = get_multi_point_stats(
+                    points=points_tuple,
+                    buffer_m=buffer_m,
+                    start_date=str(s_date),
+                    end_date=str(e_date),
+                    cloud_threshold=cloud,
+                    mode_cfg=cfg,
+                )
+            st.session_state.multi_results = multi_results
+
+    # ── 결과 렌더링 ───────────────────────────────────────────────────────────
+    if "multi_results" in st.session_state:
+        multi_results = st.session_state.multi_results
+        valid = [r for r in multi_results if r["mean"] is not None]
+
+        if not valid:
+            st.warning("⚠️ 유효한 데이터가 있는 지점이 없습니다. 기간이나 구름 허용률을 조정해보세요.")
+        else:
+            # ── 수치 비교 바 차트 ─────────────────────────────────────────────
+            st.markdown("---")
+            st.subheader(f"📊 {cfg['index_name']} 지점별 비교")
+
+            names = [r["name"] for r in valid]
+            means = [r["mean"] for r in valid]
+            colors = [
+                "#2ecc71" if is_good_value(m, cfg) else "#e74c3c"
+                for m in means
+            ]
+
+            fig_multi = go.Figure()
+            fig_multi.add_trace(go.Bar(
+                x=names,
+                y=means,
+                marker_color=colors,
+                text=[f"{v:.4f}" for v in means],
+                textposition="outside",
+            ))
+            fig_multi.add_hline(
+                y=cfg["threshold"],
+                line_dash="dash",
+                line_color="red",
+                annotation_text="기준선",
+                annotation_position="top right",
+            )
+            fig_multi.update_layout(
+                height=350,
+                margin=dict(l=20, r=20, t=30, b=20),
+                yaxis_title=f"{cfg['index_name']} 평균값",
+                yaxis=dict(range=[cfg["min"] - 0.1, cfg["max"] + 0.1]),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_multi, use_container_width=True)
+
+            # ── 레이더 차트 (정규화 비교) ─────────────────────────────────────
+            if len(valid) >= 3:
+                st.markdown("#### 🕸️ 지점별 지수 분포 비교 (레이더)")
+                fig_radar = go.Figure()
+                for r in valid:
+                    # min~max 범위로 0~1 정규화
+                    rng = cfg["max"] - cfg["min"]
+                    norm_mean  = (r["mean"]    - cfg["min"]) / rng if r["mean"]    is not None else 0
+                    norm_min   = (r["min_val"] - cfg["min"]) / rng if r["min_val"] is not None else 0
+                    norm_max   = (r["max_val"] - cfg["min"]) / rng if r["max_val"] is not None else 0
+                    norm_std   = min((r["std_dev"] or 0) / (rng / 2), 1.0)
+
+                    fig_radar.add_trace(go.Scatterpolar(
+                        r=[norm_mean, norm_max, norm_min, 1 - norm_std, norm_mean],
+                        theta=["평균", "최댓값", "최솟값", "균일성", "평균"],
+                        fill="toself",
+                        name=r["name"],
+                        opacity=0.65,
+                    ))
+                fig_radar.update_layout(
+                    polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+                    height=380,
+                    margin=dict(l=40, r=40, t=40, b=40),
+                    legend=dict(orientation="h", yanchor="bottom", y=-0.2),
+                )
+                st.plotly_chart(fig_radar, use_container_width=True)
+                st.caption("ℹ️ 모든 값은 해당 모드의 min~max 범위로 0~1 정규화한 값입니다. 균일성은 표준편차가 낮을수록 높게 표시됩니다.")
+
+            # ── 수치 요약 테이블 ──────────────────────────────────────────────
+            st.markdown("---")
+            st.subheader("📋 지점별 통계 요약")
+            df_multi = pd.DataFrame([
+                {
+                    "지점명": r["name"],
+                    "위도": round(r["lat"], 4),
+                    "경도": round(r["lon"], 4),
+                    f"평균 ({cfg['index_name']})": round(r["mean"], 4) if r["mean"] is not None else None,
+                    "최솟값": round(r["min_val"], 4) if r["min_val"] is not None else None,
+                    "최댓값": round(r["max_val"], 4) if r["max_val"] is not None else None,
+                    "표준편차": round(r["std_dev"], 4) if r["std_dev"] is not None else None,
+                    "영상 수": r["count"],
+                    "상태": "🟢 양호" if r["mean"] is not None and is_good_value(r["mean"], cfg) else "🔴 주의",
+                }
+                for r in multi_results
+            ])
+            st.dataframe(df_multi, hide_index=True, use_container_width=True)
+
+            # ── 지점별 위성 지도 (나란히) ─────────────────────────────────────
+            st.markdown("---")
+            st.subheader("🗺️ 지점별 위성 지도")
+            st.caption("각 지점의 위성 영상 레이어를 개별 지도로 표시합니다.")
+
+            cols_map = st.columns(min(len(valid), 3))
+            for i, r in enumerate(valid):
+                col_idx = i % 3
+                with cols_map[col_idx]:
+                    st.markdown(f"**{r['name']}**")
+                    st.caption(
+                        f"{cfg['index_name']}: {r['mean']:.4f} "
+                        f"{'🟢' if is_good_value(r['mean'], cfg) else '🔴'}"
+                    )
+                    m_pt = folium.Map(
+                        location=[r["lat"], r["lon"]],
+                        zoom_start=13,
+                    )
+                    if r["tile_url"]:
+                        folium.TileLayer(
+                            tiles=r["tile_url"],
+                            attr="Google Earth Engine",
+                            name=cfg["index_name"],
+                            overlay=True,
+                            control=True,
+                        ).add_to(m_pt)
+                    folium.Marker(
+                        location=[r["lat"], r["lon"]],
+                        popup=r["name"],
+                        icon=folium.Icon(color="blue", icon="info-sign"),
+                    ).add_to(m_pt)
+                    st_folium(
+                        m_pt,
+                        width="100%",
+                        height=280,
+                        returned_objects=[],
+                        key=f"multi_map_{i}",
+                    )

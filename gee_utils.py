@@ -513,3 +513,111 @@ def get_hotspots(
     except Exception:
         logger.exception("핫스팟 계산 실패 | mode=%s", mode_cfg.get("index_name"))
         return {"high": [], "low": []}
+
+
+# ─────────────────────────────────────────────
+# [신규] 다중 지점 동시 비교
+# ─────────────────────────────────────────────
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_multi_point_stats(
+    points: tuple[tuple[float, float, str], ...],  # ((lat, lon, name), ...)
+    buffer_m: int,
+    start_date: str,
+    end_date: str,
+    cloud_threshold: int,
+    mode_cfg: dict,
+) -> list[dict]:
+    """
+    여러 지점에 대해 같은 기간·모드로 통계를 한꺼번에 계산한다.
+
+    points는 tuple로 받는다 — st.cache_data가 list를 해시하지 못하기 때문.
+    반환: [
+        {
+          "name": "지점명",
+          "lat": float, "lon": float,
+          "mean": float | None,
+          "min_val": float | None,
+          "max_val": float | None,
+          "std_dev": float | None,
+          "count": int,
+          "tile_url": str | None,
+        },
+        ...
+    ]
+    """
+    results = []
+    scale = mode_cfg.get("native_resolution_m", 10)
+    index_name = mode_cfg["index_name"]
+    vis_params = {
+        "min": mode_cfg["min"],
+        "max": mode_cfg["max"],
+        "palette": mode_cfg["palette"],
+    }
+
+    for lat, lon, name in points:
+        region = ee.Geometry.Point([lon, lat]).buffer(buffer_m)
+        entry: dict = {
+            "name": name,
+            "lat": lat,
+            "lon": lon,
+            "mean": None,
+            "min_val": None,
+            "max_val": None,
+            "std_dev": None,
+            "count": 0,
+            "tile_url": None,
+        }
+
+        try:
+            collection, _, calculated_index = _build_index_image(
+                region, start_date, end_date, cloud_threshold, mode_cfg
+            )
+
+            count_raw = _safe_get_info(collection.size(), context=f"multi_count_{name}")
+            count = int(count_raw) if count_raw is not None else 0
+            entry["count"] = count
+
+            if count == 0:
+                results.append(entry)
+                continue
+
+            # 통계 (mean / min / max / stdDev 한 번에)
+            combined_reducer = (
+                ee.Reducer.mean()
+                .combine(ee.Reducer.minMax(), sharedInputs=True)
+                .combine(ee.Reducer.stdDev(), sharedInputs=True)
+            )
+            raw_stats = _safe_get_info(
+                calculated_index.reduceRegion(
+                    reducer=combined_reducer,
+                    geometry=region,
+                    scale=scale,
+                ),
+                context=f"multi_stats_{name}",
+            )
+
+            if raw_stats and isinstance(raw_stats, dict):
+                def _pick(suffix: str) -> float | None:
+                    val = raw_stats.get(f"{index_name}_{suffix}")
+                    return float(val) if isinstance(val, (int, float)) else None
+
+                entry["mean"]    = _pick("mean")
+                entry["min_val"] = _pick("min")
+                entry["max_val"] = _pick("max")
+                entry["std_dev"] = _pick("stdDev")
+
+            # 타일 URL (지도 레이어용)
+            try:
+                entry["tile_url"] = get_ee_tile_url(
+                    calculated_index.clip(region), vis_params
+                )
+            except Exception:
+                logger.warning("타일 URL 생성 실패 | point=%s", name)
+
+        except Exception:
+            logger.exception("다중 지점 통계 실패 | point=%s", name)
+
+        results.append(entry)
+
+    return results
