@@ -72,7 +72,9 @@ def run_analysis(request: AnalysisRequest) -> AnalysisResult:
     """
     region = request.region
     cfg = mode_config[request.mode_key]
-    lat, lon, buffer_m = region.lat, region.lon, region.buffer_m
+    lat, lon = region.lat, region.lon
+    # 모드별 전용 버퍼가 있으면 우선 사용 (예: CHIRPS는 30km)
+    buffer_m = cfg.get("analysis_buffer_m", region.buffer_m)
     s_date, e_date = str(request.start_date), str(request.end_date)
     cloud = request.cloud_threshold
 

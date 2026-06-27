@@ -311,20 +311,25 @@ mode_config: dict[str, dict] = {
     "🌧️ 강수량 및 가뭄 모니터링 (CHIRPS)": {
         "collection": "UCSB-CHG/CHIRPS/DAILY",
         "calc_type": "precipitation_sum",
-        "cloud_filter_prop": None,   # CHIRPS는 구름 필터 없음
+        "cloud_filter_prop": None,
         "band": "precipitation",
         "index_name": "PRECIP",
         "label": "누적 강수량",
-        "native_resolution_m": 5500,  # CHIRPS ~5.5km 해상도
+        # [수정] CHIRPS는 5.5km 해상도이므로 기본 버퍼 3km로는 픽셀이 안 잡힘.
+        # 분석 버퍼를 30km로 강제 확대한다.
+        "native_resolution_m": 5500,
+        "analysis_buffer_m": 30000,  # CHIRPS 전용 버퍼 — app/gee_utils에서 우선 사용
         "palette": [
             "#f7fbff", "#deebf7", "#c6dbef", "#9ecae1",
             "#6baed6", "#3182bd", "#08519c",
         ],
-        "min": 0.0, "max": 300.0,    # mm, 30일 기준
+        # [수정] min/max를 실제 한국 30일 강수량 범위로 조정
+        # 한국 평균: 건기 20~50mm, 우기 200~400mm
+        "min": 0.0, "max": 400.0,
         "anomaly_min": -100.0, "anomaly_max": 100.0,
-        "threshold": 50.0,           # [추정치] 30일 기준 50mm 이하 = 가뭄 주의
-        "baseline": 20.0, "ceil": 250.0,
-        "higher_is_worse": False,    # 강수량은 높을수록 좋음 (가뭄 아님)
+        "threshold": 50.0,
+        "baseline": 20.0, "ceil": 350.0,
+        "higher_is_worse": False,
         "desc_good": (
             "선택 기간 내 누적 강수량이 충분합니다. "
             "농업용수·수자원 확보가 양호한 상태로 추정됩니다. "
