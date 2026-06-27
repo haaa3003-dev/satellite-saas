@@ -127,8 +127,132 @@ def interpret_no2_lst(
     )
 
 
+def interpret_ndre_ndvi(
+    ndre_val: float, ndre_cfg: dict,
+    ndvi_val: float, ndvi_cfg: dict,
+) -> tuple[str, str]:
+    """
+    NDRE(엽록소)와 NDVI(식생 활성도) 교차 진단.
+
+    NDVI는 전체 식생량을 보고, NDRE는 엽록소·질소 함유량에 더 민감하다.
+    둘의 조합으로 "자라고는 있는데 속이 안 좋은" 상태를 포착할 수 있다.
+    """
+    ndre_bad = _is_low(ndre_val, ndre_cfg)
+    ndvi_bad = _is_low(ndvi_val, ndvi_cfg)
+
+    if ndre_bad and ndvi_bad:
+        return (
+            "🟡 복합 생육 부진",
+            "엽록소 활성도와 식생지수가 모두 낮게 관측됩니다. "
+            "질소 결핍, 병해충 피해, 또는 가뭄이 복합적으로 작용하고 있을 가능성이 있습니다. "
+            "정밀 예찰 및 토양 분석을 권장합니다.",
+        )
+    if ndre_bad and not ndvi_bad:
+        return (
+            "⚠️ 잠재적 병해충 또는 영양 결핍 의심",
+            "식생량(NDVI)은 정상이나 엽록소 활성도(NDRE)가 낮습니다. "
+            "외관상 자라고 있지만 내부적으로 질소 결핍이나 초기 병해충 스트레스가 "
+            "진행 중일 가능성이 있습니다. NDVI보다 NDRE가 먼저 반응하는 경우입니다.",
+        )
+    if not ndre_bad and ndvi_bad:
+        return (
+            "🌱 초기 생육 단계 추정",
+            "엽록소 활성도는 양호하나 전체 식생량이 아직 낮습니다. "
+            "파종 직후 또는 이앙 초기 단계로 잎 면적이 충분히 확보되지 않은 "
+            "정상적인 생육 초기 상태일 가능성이 있습니다.",
+        )
+    return (
+        "🟢 생육 상태 양호",
+        "엽록소 활성도와 식생지수 모두 양호한 범위입니다. "
+        "작물이 충분한 질소를 흡수하며 건강하게 생육 중인 것으로 추정됩니다.",
+    )
+
+
+def interpret_ndbi_lst(
+    ndbi_val: float, ndbi_cfg: dict,
+    lst_val: float, lst_cfg: dict,
+) -> tuple[str, str]:
+    """
+    NDBI(불투수면)와 LST(지표면 온도) 교차 진단.
+
+    불투수면이 높고 지표온도도 높으면 열섬 원인이 도시 구조에 있음을 시사한다.
+    지자체 도시계획 담당자에게 유용한 조합.
+    """
+    ndbi_bad = _is_low(ndbi_val, ndbi_cfg)  # higher_is_worse=True이므로 높으면 bad
+    lst_bad = _is_low(lst_val, lst_cfg)
+
+    if ndbi_bad and lst_bad:
+        return (
+            "🔴 도시 열섬 고위험 구역",
+            "불투수면 비율과 지표면 온도가 모두 높게 관측됩니다. "
+            "건물·도로 등 인공 구조물이 밀집해 열을 흡수·방출하는 "
+            "전형적인 도심 열섬 구조로 추정됩니다. "
+            "녹지 확충 또는 반사율 높은 포장재 도입 등을 검토할 수 있습니다.",
+        )
+    if ndbi_bad and not lst_bad:
+        return (
+            "🏗️ 개발 구역 (온도 영향 제한적)",
+            "불투수면 비율은 높으나 지표온도는 아직 정상 범위입니다. "
+            "신규 개발 중이거나 녹지·수계가 인근에 있어 온도 상승을 일부 완화하고 있을 "
+            "가능성이 있습니다. 장기적인 모니터링이 필요합니다.",
+        )
+    if not ndbi_bad and lst_bad:
+        return (
+            "☀️ 비도시 고온 구역",
+            "불투수면 비율은 낮으나 지표온도가 높게 관측됩니다. "
+            "논밭·나대지 등 토양 노출 구역에서의 복사열이거나 "
+            "계절적 고온 현상일 가능성이 있습니다.",
+        )
+    return (
+        "🟢 양호 (녹지 우세·온도 정상)",
+        "불투수면 비율이 낮고 지표온도도 정상 범위입니다. "
+        "녹지·농경지 비중이 높아 열섬 위험이 낮은 구역으로 추정됩니다.",
+    )
+
+
+def interpret_ndbi_ndwi(
+    ndbi_val: float, ndbi_cfg: dict,
+    ndwi_val: float, ndwi_cfg: dict,
+) -> tuple[str, str]:
+    """
+    NDBI(불투수면)와 NDWI(수분) 교차 진단.
+
+    불투수면이 높고 수분이 낮으면 도시 침수 취약성·건조 위험이 동시에 높아진다.
+    도시 방재·수자원 담당 부서에 유용한 조합.
+    """
+    ndbi_bad = _is_low(ndbi_val, ndbi_cfg)
+    ndwi_bad = _is_low(ndwi_val, ndwi_cfg)
+
+    if ndbi_bad and ndwi_bad:
+        return (
+            "⚠️ 불투수면 집중 + 수분 부족",
+            "불투수면 비율이 높고 지표 수분도 낮게 관측됩니다. "
+            "빗물이 토양에 흡수되지 못하고 표면 유출로 이어져 "
+            "집중호우 시 침수 위험이 높아질 수 있습니다. "
+            "동시에 녹지·토양의 건조도 진행 중일 가능성이 있습니다.",
+        )
+    if ndbi_bad and not ndwi_bad:
+        return (
+            "🌊 불투수면 집중 + 수분 충분",
+            "불투수면 비율은 높으나 지표 수분이 충분히 관측됩니다. "
+            "강우 직후이거나 하천·저수지 인근 도심 구역일 가능성이 있습니다. "
+            "배수 시설 상태를 함께 확인하는 것을 권장합니다.",
+        )
+    if not ndbi_bad and ndwi_bad:
+        return (
+            "🌾 녹지 우세 + 건조 토양",
+            "불투수면 비율이 낮고 녹지·농경지가 우세하나 수분이 다소 부족합니다. "
+            "가뭄 또는 관개 부족 상태일 가능성이 있습니다.",
+        )
+    return (
+        "🟢 양호 (녹지 우세·수분 정상)",
+        "불투수면 비율이 낮고 지표 수분도 정상 범위입니다. "
+        "녹지·농경지 비중이 높아 수분 순환이 원활한 구역으로 추정됩니다.",
+    )
+
+
 # ── 교차 쌍 정의 ───────────────────────────────────────────────────────────────
-# 한 모드가 여러 쌍에 속할 수 있다 (NDVI는 NDWI/NBR 둘과 짝지어짐).
+# 한 모드가 여러 쌍에 속할 수 있다 (NDVI는 NDWI/NBR/NDRE 세 쌍에 속함).
 # 각 항목: (모드키A, 모드키B, 쌍 라벨, 해석함수)
 CROSS_PAIRS: list[CrossPair] = [
     (
@@ -148,6 +272,27 @@ CROSS_PAIRS: list[CrossPair] = [
         "♨️ 도심 폭염 및 열섬 현상 분석 (LST)",
         "도심 환경 복합 진단",
         interpret_no2_lst,
+    ),
+    # [신규] NDRE ↔ NDVI: 잠재적 병해충·영양 결핍 조기 포착
+    (
+        "🌿 엽록소 농도 및 병해충 조기탐지 (NDRE)",
+        "🌾 농작물 생육 분석 (NDVI)",
+        "병해충·영양 결핍 교차 진단",
+        interpret_ndre_ndvi,
+    ),
+    # [신규] NDBI ↔ LST: 도시 열섬 원인 분석
+    (
+        "🏗️ 도시 확장 및 불투수면 탐지 (NDBI)",
+        "♨️ 도심 폭염 및 열섬 현상 분석 (LST)",
+        "도시 열섬 원인 교차 분석",
+        interpret_ndbi_lst,
+    ),
+    # [신규] NDBI ↔ NDWI: 도시 침수 취약성 평가
+    (
+        "🏗️ 도시 확장 및 불투수면 탐지 (NDBI)",
+        "🌊 저수지 및 홍수 모니터링 (NDWI)",
+        "도시 침수 취약성 교차 평가",
+        interpret_ndbi_ndwi,
     ),
 ]
 
