@@ -199,24 +199,20 @@ def _safe_get_info(ee_object: object, context: str = "") -> object:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_cached_stats(
-    lat: float,
-    lon: float,
-    buffer_m: int,
+    bbox: tuple[float, float, float, float],  # (west, south, east, north)
     start_date: str,
     end_date: str,
     cloud_threshold: int,
     mode_cfg: dict,
 ) -> tuple[int, dict | None]:
     """
-    지역/기간/모드가 동일하면 GEE 재호출 없이 캐시된 통계를 반환한다.
+    바운딩 박스/기간/모드가 동일하면 GEE 재호출 없이 캐시된 통계를 반환한다.
 
+    bbox: (서쪽경도, 남쪽위도, 동쪽경도, 북쪽위도) — WGS84 decimal degrees
     반환: (이미지 개수, GEE reduceRegion raw dict 또는 None)
-    raw dict 파싱은 models.SatelliteStatistics.extract_from_gee_dict()가 담당한다.
-
-    [수정] scale을 mode_cfg['native_resolution_m']에서 가져온다.
-    기존 scale=10 고정은 S5P(5500m), Landsat(30m)에 부정확한 해상도였다.
     """
-    region = ee.Geometry.Point([lon, lat]).buffer(buffer_m)
+    west, south, east, north = bbox
+    region = ee.Geometry.BBox(west, south, east, north)
     collection, _, calculated_index = _build_index_image(
         region, start_date, end_date, cloud_threshold, mode_cfg
     )
@@ -239,12 +235,13 @@ def get_cached_stats(
                 reducer=combined_reducer,
                 geometry=region,
                 scale=scale,
+                maxPixels=1e9,
             ),
             context=f"reduceRegion scale={scale}",
         )
         return count, (raw_stats if isinstance(raw_stats, dict) else {})
     except (GEEQuotaError, GEEAuthenticationError, GEETimeoutError):
-        raise  # 호출부(analysis_service)에서 처리
+        raise
     except Exception:
         logger.exception("reduceRegion 실패 | mode=%s", mode_cfg.get("index_name"))
         return count, {}
@@ -266,9 +263,7 @@ def get_satellite_index_for_period(
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_time_series(
-    lat: float,
-    lon: float,
-    buffer_m: int,
+    bbox: tuple[float, float, float, float],  # (west, south, east, north)
     start_date: str,
     end_date: str,
     cloud_threshold: int,
@@ -276,13 +271,10 @@ def get_time_series(
 ) -> list[tuple[str, float]]:
     """
     선택 기간 내 개별 위성 촬영분마다 (날짜, 평균값)을 계산해 반환한다.
-
-    ImageCollection.map()으로 서버에서 집계한 뒤 getInfo()를 한 번만 호출한다.
-    (이미지 개수만큼 왕복하지 않음 — GEE 비용 절약)
-
-    [수정] scale 동적화, 예외를 빈 리스트 대신 로깅 후 전파.
+    bbox: (서쪽경도, 남쪽위도, 동쪽경도, 북쪽위도)
     """
-    region = ee.Geometry.Point([lon, lat]).buffer(buffer_m)
+    west, south, east, north = bbox
+    region = ee.Geometry.BBox(west, south, east, north)
     collection = _filtered_collection(region, start_date, end_date, cloud_threshold, mode_cfg)
     index_name: str = mode_cfg["index_name"]
     scale: int = mode_cfg.get("native_resolution_m", 10)
@@ -347,9 +339,7 @@ def get_ee_tile_url(ee_image_object: ee.Image, vis_params: dict) -> str:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_change_detection_tile_url(
-    lat: float,
-    lon: float,
-    buffer_m: int,
+    bbox: tuple[float, float, float, float],  # (west, south, east, north)
     before_start: str,
     before_end: str,
     after_start: str,
@@ -357,15 +347,9 @@ def get_change_detection_tile_url(
     cloud_threshold: int,
     mode_cfg: dict,
 ) -> tuple[str | None, float | None, float | None]:
-    """
-    두 기간(before / after)의 지수 차이 이미지를 계산해 타일 URL을 반환한다.
-
-    반환: (타일URL, before평균, after평균)
-    차이 이미지 = after - before
-      양수(+) → 지수 증가 (NDVI라면 식생 회복, NDBI라면 개발 진행)
-      음수(-) → 지수 감소 (NDVI라면 식생 소실, NDBI라면 녹지 회복)
-    """
-    region = ee.Geometry.Point([lon, lat]).buffer(buffer_m)
+    """두 기간(before/after) 지수 차이 이미지를 계산해 타일 URL 반환."""
+    west, south, east, north = bbox
+    region = ee.Geometry.BBox(west, south, east, north)
     scale = mode_cfg.get("native_resolution_m", 10)
 
     try:
@@ -425,23 +409,14 @@ def get_change_detection_tile_url(
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_seasonal_trend(
-    lat: float,
-    lon: float,
-    buffer_m: int,
+    bbox: tuple[float, float, float, float],
     year: int,
     cloud_threshold: int,
     mode_cfg: dict,
 ) -> list[tuple[str, float]]:
-    """
-    지정 연도의 월별 평균값을 계산해 반환한다.
-
-    반환: [("2024-01", 0.35), ("2024-02", 0.41), ...]
-    데이터 없는 달은 결과에서 제외된다.
-
-    기존 get_time_series()는 짧은 기간 내 개별 촬영분을 반환하지만
-    이 함수는 월 단위로 묶어서 계절 패턴을 보여준다.
-    """
-    region = ee.Geometry.Point([lon, lat]).buffer(buffer_m)
+    """지정 연도의 월별 평균값을 계산해 반환한다."""
+    west, south, east, north = bbox
+    region = ee.Geometry.BBox(west, south, east, north)
     scale = mode_cfg.get("native_resolution_m", 10)
     index_name = mode_cfg["index_name"]
     results: list[tuple[str, float]] = []
@@ -491,28 +466,16 @@ def get_seasonal_trend(
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_hotspots(
-    lat: float,
-    lon: float,
-    buffer_m: int,
+    bbox: tuple[float, float, float, float],
     start_date: str,
     end_date: str,
     cloud_threshold: int,
     mode_cfg: dict,
     n_points: int = 5,
 ) -> dict[str, list[tuple[float, float, float]]]:
-    """
-    구역 내에서 지수가 가장 높은/낮은 픽셀 위치를 반환한다.
-
-    반환:
-      {
-        "high": [(lat, lon, value), ...],  # 상위 n_points개
-        "low":  [(lat, lon, value), ...],  # 하위 n_points개
-      }
-
-    higher_is_worse 방향에 따라 "주의 지점"과 "양호 지점"으로 해석이 달라진다.
-    GEE sample()을 사용해 픽셀 단위 좌표를 추출한다.
-    """
-    region = ee.Geometry.Point([lon, lat]).buffer(buffer_m)
+    """구역 내에서 지수가 가장 높은/낮은 픽셀 위치를 반환한다."""
+    west, south, east, north = bbox
+    region = ee.Geometry.BBox(west, south, east, north)
     scale = mode_cfg.get("native_resolution_m", 10)
     index_name = mode_cfg["index_name"]
 
@@ -564,30 +527,12 @@ def get_hotspots(
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_multi_point_stats(
     points: tuple[tuple[float, float, str], ...],  # ((lat, lon, name), ...)
-    buffer_m: int,
     start_date: str,
     end_date: str,
     cloud_threshold: int,
     mode_cfg: dict,
 ) -> list[dict]:
-    """
-    여러 지점에 대해 같은 기간·모드로 통계를 한꺼번에 계산한다.
-
-    points는 tuple로 받는다 — st.cache_data가 list를 해시하지 못하기 때문.
-    반환: [
-        {
-          "name": "지점명",
-          "lat": float, "lon": float,
-          "mean": float | None,
-          "min_val": float | None,
-          "max_val": float | None,
-          "std_dev": float | None,
-          "count": int,
-          "tile_url": str | None,
-        },
-        ...
-    ]
-    """
+    """여러 지점에 대해 같은 기간·모드로 통계를 한꺼번에 계산한다."""
     results = []
     scale = mode_cfg.get("native_resolution_m", 10)
     index_name = mode_cfg["index_name"]
@@ -598,7 +543,9 @@ def get_multi_point_stats(
     }
 
     for lat, lon, name in points:
-        region = ee.Geometry.Point([lon, lat]).buffer(buffer_m)
+        # 각 지점 주변 0.05도(약 5km) bbox 생성
+        delta = 0.025
+        region = ee.Geometry.BBox(lon - delta, lat - delta, lon + delta, lat + delta)
         entry: dict = {
             "name": name,
             "lat": lat,

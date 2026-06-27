@@ -20,19 +20,35 @@ from typing import Optional
 
 @dataclass
 class RegionInfo:
-    """분석 대상 지역."""
-    lat: float
-    lon: float
-    name: str
-    buffer_m: int = 3000  # 반경(미터). 전체에서 단 한 곳에만 정의.
+    """분석 대상 지역 — 바운딩 박스 기반."""
+    west: float    # 서쪽 경도
+    south: float   # 남쪽 위도
+    east: float    # 동쪽 경도
+    north: float   # 북쪽 위도
+    name: str = ""
 
     def __post_init__(self) -> None:
-        if not (-90 <= self.lat <= 90):
-            raise ValueError(f"위도 범위 초과: {self.lat}")
-        if not (-180 <= self.lon <= 180):
-            raise ValueError(f"경도 범위 초과: {self.lon}")
-        if self.buffer_m <= 0:
-            raise ValueError(f"버퍼 반경은 양수여야 합니다: {self.buffer_m}")
+        if not (-180 <= self.west <= 180) or not (-180 <= self.east <= 180):
+            raise ValueError(f"경도 범위 초과: west={self.west}, east={self.east}")
+        if not (-90 <= self.south <= 90) or not (-90 <= self.north <= 90):
+            raise ValueError(f"위도 범위 초과: south={self.south}, north={self.north}")
+        if self.west >= self.east:
+            raise ValueError("west 경도가 east보다 크거나 같습니다.")
+        if self.south >= self.north:
+            raise ValueError("south 위도가 north보다 크거나 같습니다.")
+
+    @property
+    def bbox(self) -> tuple[float, float, float, float]:
+        """(west, south, east, north) 튜플 반환."""
+        return (self.west, self.south, self.east, self.north)
+
+    @property
+    def center_lat(self) -> float:
+        return (self.south + self.north) / 2
+
+    @property
+    def center_lon(self) -> float:
+        return (self.west + self.east) / 2
 
 
 @dataclass

@@ -51,12 +51,12 @@ from gee_utils import (
     get_seasonal_trend,
     init_gee,
 )
-from mode_config import ANALYSIS_BUFFER_M, mode_config, preset_coords
+from mode_config import mode_config, preset_coords
 from models import AnalysisRequest, AnalysisResult, RegionInfo
 from report_builder import generate_excel_report
 
 # ─────────────────────────────────────────────
-# 로깅 설정 (Streamlit Cloud 포함 어디서나 작동)
+# 로깅 설정
 # ─────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -70,11 +70,11 @@ logger = logging.getLogger(__name__)
 st.set_page_config(page_title="K-Sat 오픈 탐색기", page_icon="🌍", layout="wide")
 
 st.title("🌍 K-Sat 위성 데이터 오픈 탐색기")
-st.caption("누구나 자유롭게 분석하고 활용하는 Sentinel-2 위성 기반 환경·재해 모니터링 플랫폼")
+st.caption("누구나 자유롭게 분석하고 활용하는 위성 기반 환경·재해 모니터링 플랫폼")
 st.info(
-    "💡 **[안내]** 본 플랫폼은 오픈 위성 데이터를 활용하여 누구나 무료로 특정 지역의 "
-    "농업 생육, 수자원, 산림 상태를 관측할 수 있도록 지원합니다. "
-    "아래 검색창에 궁금한 지역을 입력해 보세요!"
+    "💡 **[사용법]** ① 아래 지도를 원하는 지역으로 이동하고 줌인하세요. "
+    "② 지명 검색이나 프리셋으로 빠르게 이동할 수 있습니다. "
+    "③ 화면에 보이는 범위가 분석 구역이 됩니다. ④ 날짜와 모드를 설정하고 버튼을 누르세요."
 )
 st.markdown("---")
 
@@ -101,9 +101,9 @@ st.sidebar.markdown("---")
 st.sidebar.caption("Powered by Google Earth Engine & K-Sat Team")
 
 # ─────────────────────────────────────────────
-# 3. 지역 검색 — 콜백 기반 상호 배타 전환
+# 3. 지역 선택 — 지도 이동 + 현재 화면 범위가 분석 구역
 # ─────────────────────────────────────────────
-st.subheader("📍 관측 지역 검색")
+st.subheader("📍 관측 지역 선택")
 
 
 def _clear_preset() -> None:
@@ -122,9 +122,11 @@ if "search_input" not in st.session_state:
     st.session_state.search_input = ""
 if "preset_select" not in st.session_state:
     st.session_state.preset_select = "직접 검색"
-if "lat" not in st.session_state:
-    st.session_state.lat = _first_coords[0]
-    st.session_state.lon = _first_coords[1]
+if "map_center" not in st.session_state:
+    st.session_state.map_center = [_first_coords[0], _first_coords[1]]
+if "map_zoom" not in st.session_state:
+    st.session_state.map_zoom = 12
+if "region_name" not in st.session_state:
     st.session_state.region_name = _first_preset_key
 
 col_s1, col_s2 = st.columns([2, 1])
@@ -143,23 +145,65 @@ with col_s2:
         on_change=_clear_search,
     )
 
-# 지역 좌표 업데이트
+# 지역 좌표 업데이트 (지도 중심점 이동)
 if st.session_state.search_input:
     try:
-        results = geocode_place(st.session_state.search_input)
-        if results:
-            st.session_state.lat, st.session_state.lon, st.session_state.region_name = results[0]
-            st.success(f"✅ '{st.session_state.region_name}'(으)로 좌표를 설정했습니다. 아래 버튼을 눌러주세요.")
+        geo_results = geocode_place(st.session_state.search_input)
+        if geo_results:
+            found_lat, found_lon, found_name = geo_results[0]
+            st.session_state.map_center = [found_lat, found_lon]
+            st.session_state.map_zoom = 13
+            st.session_state.region_name = found_name[:30]
+            st.success(f"✅ '{found_name[:30]}'로 지도를 이동했습니다.")
         else:
-            st.warning("⚠️ 검색 결과가 없습니다. 다른 검색어나 조금 더 넓은 지명을 입력해보세요.")
+            st.warning("⚠️ 검색 결과가 없습니다.")
     except NetworkError as exc:
-        st.warning(f"⚠️ 지명 검색 중 오류가 발생했습니다: {exc}")
+        st.warning(f"⚠️ 지명 검색 중 오류: {exc}")
 
 elif st.session_state.preset_select != "직접 검색":
     preset = st.session_state.preset_select
     if preset in preset_coords:
-        st.session_state.lat, st.session_state.lon = preset_coords[preset]
+        st.session_state.map_center = list(preset_coords[preset])
+        st.session_state.map_zoom = 13
         st.session_state.region_name = preset
+
+# ── 지도 (현재 화면 범위 = 분석 구역) ──────────────────────────────────────
+st.caption("🗺️ 지도를 이동·줌인하여 분석할 구역을 화면에 맞춰주세요. 화면에 보이는 사각형 범위가 분석 구역입니다.")
+
+selector_map = folium.Map(
+    location=st.session_state.map_center,
+    zoom_start=st.session_state.map_zoom,
+)
+map_data = st_folium(
+    selector_map,
+    width="100%",
+    height=320,
+    returned_objects=["bounds"],
+    key="selector_map",
+)
+
+# 지도에서 현재 화면 범위(bbox) 추출
+current_bbox: tuple[float, float, float, float] | None = None
+if map_data and map_data.get("bounds"):
+    b = map_data["bounds"]
+    try:
+        west  = b["_southWest"]["lng"]
+        south = b["_southWest"]["lat"]
+        east  = b["_northEast"]["lng"]
+        north = b["_northEast"]["lat"]
+        current_bbox = (west, south, east, north)
+        # 지도 중심 업데이트 (다음 렌더링 시 위치 유지)
+        st.session_state.map_center = [(south + north) / 2, (west + east) / 2]
+        st.session_state.map_zoom = map_data.get("zoom", st.session_state.map_zoom)
+    except (KeyError, TypeError):
+        current_bbox = None
+
+if current_bbox:
+    w, s, e, n = current_bbox
+    st.caption(
+        f"📐 현재 분석 구역: 위도 {s:.4f}°~{n:.4f}°, 경도 {w:.4f}°~{e:.4f}° "
+        f"(약 {abs(e-w)*111:.1f}km × {abs(n-s)*111:.1f}km)"
+    )
 
 # ─────────────────────────────────────────────
 # 4. 분석 조건 설정
@@ -183,22 +227,21 @@ with col_d4:
 # 5. 분석 실행 (버튼 클릭 시에만)
 # ─────────────────────────────────────────────
 if run_btn:
-    # 입력 검증은 AnalysisRequest.__post_init__이 담당하지만
-    # 사용자 안내는 UI 레이어에서 먼저 처리한다.
     if s_date >= e_date:
         st.warning("⚠️ 관측 시작일은 종료일보다 빨라야 합니다.")
+    elif current_bbox is None:
+        st.warning("⚠️ 지도가 로드되지 않았습니다. 잠시 후 다시 시도해주세요.")
     else:
         if "analysis_res" in st.session_state:
             del st.session_state["analysis_res"]
 
+        w, s, e, n = current_bbox
         with st.spinner("🛰️ 위성 데이터를 렌더링하고 있습니다. 잠시만 기다려주세요..."):
             try:
                 request = AnalysisRequest(
                     region=RegionInfo(
-                        lat=st.session_state.lat,
-                        lon=st.session_state.lon,
+                        west=w, south=s, east=e, north=n,
                         name=st.session_state.region_name,
-                        buffer_m=ANALYSIS_BUFFER_M,
                     ),
                     mode_key=analysis_mode,
                     start_date=s_date,
@@ -234,10 +277,9 @@ if "analysis_res" not in st.session_state:
 
 res: AnalysisResult = st.session_state.analysis_res
 cfg: dict = mode_config[res.request.mode_key]
-lat = res.request.region.lat
-lon = res.request.region.lon
-# 모드별 전용 버퍼가 있으면 우선 사용 (CHIRPS 등)
-buffer_m = cfg.get("analysis_buffer_m", res.request.region.buffer_m)
+lat = res.request.region.center_lat
+lon = res.request.region.center_lon
+bbox = res.request.region.bbox
 region_name = res.request.region.name
 s_date = res.request.start_date
 e_date = res.request.end_date
@@ -246,15 +288,18 @@ cur = res.current
 good = cur.mean is not None and is_good_value(cur.mean, cfg)
 avg_display = cur.mean if cur.mean is not None else 0.0
 
-# 버퍼 크기에 따른 줌 레벨 자동 계산
-def _buffer_to_zoom(buf_m: int) -> int:
-    if buf_m <= 3000:   return 13
-    if buf_m <= 5000:   return 12
-    if buf_m <= 10000:  return 11
-    if buf_m <= 20000:  return 10
+# 줌 레벨 — bbox 크기 기반 자동 계산
+def _bbox_to_zoom(w: float, s: float, e: float, n: float) -> int:
+    span_deg = max(abs(e - w), abs(n - s))
+    if span_deg < 0.02:   return 15
+    if span_deg < 0.05:   return 14
+    if span_deg < 0.1:    return 13
+    if span_deg < 0.3:    return 12
+    if span_deg < 0.8:    return 11
+    if span_deg < 2.0:    return 10
     return 9
 
-map_zoom = _buffer_to_zoom(buffer_m)
+map_zoom = _bbox_to_zoom(*bbox)
 
 st.markdown("---")
 
@@ -472,7 +517,7 @@ with tab_change:
         else:
             with st.spinner("두 기간 위성 이미지를 비교하는 중..."):
                 tile_url, before_mean, after_mean = get_change_detection_tile_url(
-                    lat, lon, buffer_m,
+                    bbox,
                     str(before_s), str(before_e),
                     str(after_s), str(after_e),
                     cloud, cfg,
@@ -546,14 +591,14 @@ with tab_seasonal:
     if seasonal_btn:
         with st.spinner(f"{trend_year}년 월별 데이터 계산 중... (최대 1~2분 소요)"):
             monthly_data = get_seasonal_trend(
-                lat, lon, buffer_m, trend_year, cloud, cfg
+                bbox, trend_year, cloud, cfg
             )
 
         compare_data = []
         if compare_year != "없음":
             with st.spinner(f"{compare_year}년 비교 데이터 계산 중..."):
                 compare_data = get_seasonal_trend(
-                    lat, lon, buffer_m, int(compare_year), cloud, cfg
+                    bbox, int(compare_year), cloud, cfg
                 )
 
         if not monthly_data:
@@ -629,7 +674,7 @@ with tab_hotspot:
     if hotspot_btn:
         with st.spinner("구역 내 픽셀을 분석하는 중..."):
             hotspots = get_hotspots(
-                lat, lon, buffer_m,
+                bbox,
                 str(s_date), str(e_date),
                 cloud, cfg, n_points,
             )
@@ -834,7 +879,6 @@ with tab_multi:
             with st.spinner(f"{len(st.session_state.multi_points)}개 지점 분석 중... 잠시만 기다려주세요."):
                 multi_results = get_multi_point_stats(
                     points=points_tuple,
-                    buffer_m=buffer_m,
                     start_date=str(s_date),
                     end_date=str(e_date),
                     cloud_threshold=cloud,

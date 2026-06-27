@@ -55,36 +55,20 @@ def is_good_value(val: float, cfg: dict) -> bool:
 
 
 def run_analysis(request: AnalysisRequest) -> AnalysisResult:
-    """
-    분석 요청을 받아 전체 분석을 실행하고 AnalysisResult를 반환한다.
-
-    호출 순서:
-    1. 현재 기간 통계 조회
-    2. 전년 동기 통계 조회
-    3. 시계열 조회
-    4. 교차 진단
-    5. 지도 타일 URL 생성
-
-    예외 처리:
-    - GEENoDataError: 데이터 없음 (정상 케이스, UI에서 안내)
-    - GEEQuotaError / GEETimeoutError: 서버 문제, UI에서 재시도 안내
-    - GEEAuthenticationError: 인증 문제, 관리자 확인 필요
-    """
+    """분석 요청을 받아 전체 분석을 실행하고 AnalysisResult를 반환한다."""
     region = request.region
     cfg = mode_config[request.mode_key]
-    lat, lon = region.lat, region.lon
-    # 모드별 전용 버퍼가 있으면 우선 사용 (예: CHIRPS는 30km)
-    buffer_m = cfg.get("analysis_buffer_m", region.buffer_m)
+    bbox = region.bbox  # (west, south, east, north)
     s_date, e_date = str(request.start_date), str(request.end_date)
     cloud = request.cloud_threshold
 
     logger.info(
-        "Analysis started | mode=%s lat=%.4f lon=%.4f period=%s~%s",
-        request.mode_key, lat, lon, s_date, e_date,
+        "Analysis started | mode=%s bbox=%s period=%s~%s",
+        request.mode_key, bbox, s_date, e_date,
     )
 
     # ── 1. 현재 기간 통계 ─────────────────────────────────────────────
-    count, raw_stats = get_cached_stats(lat, lon, buffer_m, s_date, e_date, cloud, cfg)
+    count, raw_stats = get_cached_stats(bbox, s_date, e_date, cloud, cfg)
     current = SatelliteStatistics.extract_from_gee_dict(raw_stats, cfg["index_name"], count)
 
     if not current.has_data:
@@ -97,21 +81,20 @@ def run_analysis(request: AnalysisRequest) -> AnalysisResult:
     # ── 2. 전년 동기 통계 ─────────────────────────────────────────────
     ly_start = request.start_date.replace(year=request.start_date.year - 1)
     ly_end = request.end_date.replace(year=request.end_date.year - 1)
-    last_count, last_raw = get_cached_stats(
-        lat, lon, buffer_m, str(ly_start), str(ly_end), cloud, cfg
-    )
+    last_count, last_raw = get_cached_stats(bbox, str(ly_start), str(ly_end), cloud, cfg)
     last_year = SatelliteStatistics.extract_from_gee_dict(
         last_raw, cfg["index_name"], last_count
     )
 
     # ── 3. 시계열 ─────────────────────────────────────────────────────
-    time_series = get_time_series(lat, lon, buffer_m, s_date, e_date, cloud, cfg)
+    time_series = get_time_series(bbox, s_date, e_date, cloud, cfg)
 
     # ── 4. 교차 진단 ──────────────────────────────────────────────────
-    cross_results = _run_cross_diagnosis(request, lat, lon, buffer_m, cloud, current)
+    cross_results = _run_cross_diagnosis(request, bbox, cloud, current)
 
     # ── 5. 타일 URL ───────────────────────────────────────────────────
-    geo_region = ee.Geometry.Point([lon, lat]).buffer(buffer_m)
+    west, south, east, north = bbox
+    geo_region = ee.Geometry.BBox(west, south, east, north)
     _, calculated_index = get_satellite_index_for_period(
         geo_region, s_date, e_date, cloud, cfg
     )
@@ -132,18 +115,11 @@ def run_analysis(request: AnalysisRequest) -> AnalysisResult:
 
 def _run_cross_diagnosis(
     request: AnalysisRequest,
-    lat: float,
-    lon: float,
-    buffer_m: int,
+    bbox: tuple[float, float, float, float],
     cloud: int,
     current: SatelliteStatistics,
 ) -> list[CrossDiagnosisResult]:
-    """
-    교차 진단 쌍을 찾아 짝 지수 통계를 조회하고 해석 결과를 반환한다.
-
-    기존: app.py의 for loop 안에서 dict를 직접 조립했다.
-    개선: CrossDiagnosisResult dataclass로 반환, 서비스 레이어에 집중.
-    """
+    """교차 진단 쌍을 찾아 짝 지수 통계를 조회하고 해석 결과를 반환한다."""
     pairs = find_cross_pairs_for_mode(request.mode_key)
     results: list[CrossDiagnosisResult] = []
 
@@ -152,9 +128,7 @@ def _run_cross_diagnosis(
         s_date, e_date = str(request.start_date), str(request.end_date)
 
         try:
-            p_count, p_raw = get_cached_stats(
-                lat, lon, buffer_m, s_date, e_date, cloud, partner_cfg
-            )
+            p_count, p_raw = get_cached_stats(bbox, s_date, e_date, cloud, partner_cfg)
             partner_stats = SatelliteStatistics.extract_from_gee_dict(
                 p_raw, partner_cfg["index_name"], p_count
             )

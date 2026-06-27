@@ -380,134 +380,7 @@ def interpret_sar_vv_sar_vh(
     )
 
 
-# ── [신규] CHIRPS 교차 진단 함수들 ────────────────────────────────────────────
-
-def interpret_chirps_ndvi(
-    precip_val: float, precip_cfg: dict,
-    ndvi_val: float, ndvi_cfg: dict,
-) -> tuple[str, str]:
-    """
-    강수량(CHIRPS)과 식생(NDVI) 교차 진단.
-
-    강수량이 충분한데 NDVI가 낮으면 토양·병해충 문제,
-    강수량이 부족한데 NDVI가 높으면 관개 시설 덕분일 가능성.
-    """
-    precip_bad = _is_low(precip_val, precip_cfg)  # 강수량 낮음 = 나쁨
-    ndvi_bad   = _is_low(ndvi_val, ndvi_cfg)
-
-    if precip_bad and ndvi_bad:
-        return (
-            "🟤 가뭄 복합 위험 — 강수·식생 동시 부진",
-            "강수량과 식생 활성도가 모두 낮습니다. "
-            "강수 부족이 직접적으로 작물 생육에 영향을 미치고 있을 가능성이 높습니다. "
-            "관개 용수 확보 및 가뭄 피해 예방 조치가 필요합니다.",
-        )
-    if precip_bad and not ndvi_bad:
-        return (
-            "💧 강수 부족 — 관개 시설 보완 중 추정",
-            "강수량은 적으나 식생 상태는 양호합니다. "
-            "관개 시설이나 저수지 물 공급이 강수 부족을 보완하고 있을 가능성이 있습니다. "
-            "저수지 수위와 관개 현황을 함께 확인하는 것을 권장합니다.",
-        )
-    if not precip_bad and ndvi_bad:
-        return (
-            "⚠️ 강수 충분 — 식생 부진 (다른 원인 의심)",
-            "강수량은 충분하나 식생 활성도가 낮습니다. "
-            "토양 문제, 병해충, 과잉 침수, 또는 파종 전 나대지 상태일 가능성이 있습니다. "
-            "NDWI·SAR VV와 교차 확인해 침수 여부를 먼저 배제하는 것을 권장합니다.",
-        )
-    return (
-        "🟢 강수·식생 모두 양호",
-        "강수량과 식생 활성도가 모두 정상 범위입니다. "
-        "안정적인 수분 공급과 작물 생육이 이루어지고 있는 것으로 추정됩니다.",
-    )
-
-
-def interpret_chirps_ndwi(
-    precip_val: float, precip_cfg: dict,
-    ndwi_val: float, ndwi_cfg: dict,
-) -> tuple[str, str]:
-    """
-    강수량(CHIRPS)과 지표수분(NDWI) 교차 진단.
-
-    강수량과 NDWI를 같이 보면 저수지 수위, 토양 침투,
-    하천 범람 위험을 광역 단위로 파악할 수 있다.
-    """
-    precip_bad = _is_low(precip_val, precip_cfg)
-    ndwi_bad   = _is_low(ndwi_val, ndwi_cfg)
-
-    if precip_bad and ndwi_bad:
-        return (
-            "🏜️ 복합 가뭄 — 강수·수분 동시 부족",
-            "강수량과 지표 수분 모두 낮게 관측됩니다. "
-            "저수지 수위 하락, 하천 유량 감소, 농업용수 부족이 "
-            "복합적으로 진행 중일 가능성이 있습니다.",
-        )
-    if not precip_bad and not ndwi_bad:
-        return (
-            "🌊 강수 충분 — 수분 과포화 주의",
-            "강수량과 지표 수분이 모두 높게 관측됩니다. "
-            "침수·범람 위험이 있는 구역일 수 있습니다. "
-            "저지대·하천 인근은 배수 시설 점검을 권장합니다.",
-        )
-    if precip_bad and not ndwi_bad:
-        return (
-            "💦 강수 부족 — 지표 수분 유지 중",
-            "강수량은 부족하나 지표 수분은 아직 유지되고 있습니다. "
-            "저수지·지하수 등 대체 수원이 수분을 공급하고 있거나 "
-            "최근 강수의 영향이 남아 있는 상태일 수 있습니다.",
-        )
-    return (
-        "☀️ 강수 충분 — 수분 낮음 (증발산 활발)",
-        "강수량은 충분하나 지표 수분이 낮습니다. "
-        "기온이 높아 증발산이 활발하거나 배수가 원활한 토양 구조일 가능성이 있습니다.",
-    )
-
-
-def interpret_chirps_sar_vv(
-    precip_val: float, precip_cfg: dict,
-    sar_val: float, sar_cfg: dict,
-) -> tuple[str, str]:
-    """
-    강수량(CHIRPS)과 SAR VV(토양수분·레이더) 교차 진단.
-
-    CHIRPS는 광역 강수 추정, SAR VV는 실제 지표면 수분 반응.
-    둘의 불일치로 국지적 침투 특성, 도시 불투수면 영향 등을 파악한다.
-    """
-    precip_bad = _is_low(precip_val, precip_cfg)
-    # SAR VV: higher_is_worse=False → 낮을수록 수분 높음
-    sar_wet = _is_low(sar_val, sar_cfg)  # VV 낮음 = 토양 수분 높음
-
-    if precip_bad and sar_wet:
-        return (
-            "⚠️ 강수 부족 — 토양 수분 과다 (침수·배수 불량 의심)",
-            "강수량은 적으나 SAR이 토양 수분 과다를 감지합니다. "
-            "지역 배수 불량, 지하수 용출, 또는 인근 하천 역류 가능성이 있습니다. "
-            "현장 배수로 상태를 확인하는 것을 권장합니다.",
-        )
-    if not precip_bad and not sar_wet:
-        return (
-            "🏗️ 강수 충분 — 토양 침투 불량 (불투수면 의심)",
-            "강수량은 충분하나 토양 수분이 낮게 감지됩니다. "
-            "포장·건물 등 불투수면이 많아 빗물이 토양에 흡수되지 못하고 "
-            "표면 유출로 빠져나가는 구역일 가능성이 있습니다.",
-        )
-    if not precip_bad and sar_wet:
-        return (
-            "🌧️ 강수·토양 수분 동시 높음 — 침수 주의",
-            "강수량과 SAR 토양 수분 모두 높게 관측됩니다. "
-            "지반 포화 상태로 집중호우 시 즉각적인 침수·산사태 위험이 있습니다.",
-        )
-    return (
-        "🟢 강수·토양 수분 정상",
-        "강수량과 SAR 토양 수분 모두 정상 범위입니다. "
-        "수분 순환이 정상적으로 이루어지고 있는 것으로 추정됩니다.",
-    )
-
-
 # ── 교차 쌍 정의 ───────────────────────────────────────────────────────────────
-# 한 모드가 여러 쌍에 속할 수 있다 (NDVI는 NDWI/NBR/NDRE 세 쌍에 속함).
-# 각 항목: (모드키A, 모드키B, 쌍 라벨, 해석함수)
 CROSS_PAIRS: list[CrossPair] = [
     (
         "🌾 농작물 생육 분석 (NDVI)",
@@ -545,7 +418,6 @@ CROSS_PAIRS: list[CrossPair] = [
         "도시 침수 취약성 교차 평가",
         interpret_ndbi_ndwi,
     ),
-    # [신규] SAR ↔ 광학 교차 진단
     (
         "🌧️ 토양수분 및 침수 탐지 SAR (VV)",
         "🌊 저수지 및 홍수 모니터링 (NDWI)",
@@ -558,31 +430,11 @@ CROSS_PAIRS: list[CrossPair] = [
         "식생 상태 이중 확인 (레이더+광학)",
         interpret_sar_vh_ndvi,
     ),
-    # [신규] SAR VV ↔ SAR VH: 침수 vs 식생 구조 구분
     (
         "🌧️ 토양수분 및 침수 탐지 SAR (VV)",
         "🌲 산림·작물 구조 탐지 SAR (VH)",
         "침수·도복 vs 식생 구조 구분 (SAR 이중 편파)",
         interpret_sar_vv_sar_vh,
-    ),
-    # [신규] CHIRPS ↔ 다른 지수 교차 진단
-    (
-        "🌧️ 강수량 및 가뭄 모니터링 (CHIRPS)",
-        "🌾 농작물 생육 분석 (NDVI)",
-        "강수량·식생 생육 상관 진단",
-        interpret_chirps_ndvi,
-    ),
-    (
-        "🌧️ 강수량 및 가뭄 모니터링 (CHIRPS)",
-        "🌊 저수지 및 홍수 모니터링 (NDWI)",
-        "강수량·수분 공급 교차 진단",
-        interpret_chirps_ndwi,
-    ),
-    (
-        "🌧️ 강수량 및 가뭄 모니터링 (CHIRPS)",
-        "🌧️ 토양수분 및 침수 탐지 SAR (VV)",
-        "강수량·토양수분 가뭄 복합 진단",
-        interpret_chirps_sar_vv,
     ),
 ]
 
