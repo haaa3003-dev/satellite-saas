@@ -295,3 +295,221 @@ def get_ee_tile_url(ee_image_object: ee.Image, vis_params: dict) -> str:
     """GEE 지도 레이어 타일 URL 반환."""
     map_id_dict = ee.Image(ee_image_object).getMapId(vis_params)
     return map_id_dict["tile_fetcher"].url_format
+
+
+# ─────────────────────────────────────────────
+# [신규] 변화 탐지 — 두 기간 차이 이미지
+# ─────────────────────────────────────────────
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_change_detection_tile_url(
+    lat: float,
+    lon: float,
+    buffer_m: int,
+    before_start: str,
+    before_end: str,
+    after_start: str,
+    after_end: str,
+    cloud_threshold: int,
+    mode_cfg: dict,
+) -> tuple[str | None, float | None, float | None]:
+    """
+    두 기간(before / after)의 지수 차이 이미지를 계산해 타일 URL을 반환한다.
+
+    반환: (타일URL, before평균, after평균)
+    차이 이미지 = after - before
+      양수(+) → 지수 증가 (NDVI라면 식생 회복, NDBI라면 개발 진행)
+      음수(-) → 지수 감소 (NDVI라면 식생 소실, NDBI라면 녹지 회복)
+    """
+    region = ee.Geometry.Point([lon, lat]).buffer(buffer_m)
+    scale = mode_cfg.get("native_resolution_m", 10)
+
+    try:
+        # before 이미지
+        _, _, before_index = _build_index_image(
+            region, before_start, before_end, cloud_threshold, mode_cfg
+        )
+        # after 이미지
+        _, _, after_index = _build_index_image(
+            region, after_start, after_end, cloud_threshold, mode_cfg
+        )
+
+        # 차이 이미지 (after - before)
+        diff_image = after_index.subtract(before_index).rename("diff")
+
+        # 차이 시각화 — 빨강(감소) ~ 흰색(변화없음) ~ 파랑(증가)
+        diff_vis = {
+            "min": -0.3, "max": 0.3,
+            "palette": ["#d73027", "#f46d43", "#fdae61", "#ffffff",
+                        "#74add1", "#4575b4", "#313695"],
+        }
+        tile_url = get_ee_tile_url(diff_image.clip(region), diff_vis)
+
+        # before/after 평균값 (수치 비교용)
+        reducer = ee.Reducer.mean()
+        before_stats = _safe_get_info(
+            before_index.reduceRegion(reducer=reducer, geometry=region, scale=scale),
+            context="change_before_mean",
+        )
+        after_stats = _safe_get_info(
+            after_index.reduceRegion(reducer=reducer, geometry=region, scale=scale),
+            context="change_after_mean",
+        )
+
+        idx = mode_cfg["index_name"]
+        before_mean = before_stats.get(f"{idx}_mean") if before_stats else None
+        after_mean = after_stats.get(f"{idx}_mean") if after_stats else None
+
+        # reduceRegion 단일 reducer는 키가 index_name 그대로 반환됨
+        if before_mean is None and before_stats:
+            before_mean = before_stats.get(idx)
+        if after_mean is None and after_stats:
+            after_mean = after_stats.get(idx)
+
+        return tile_url, (
+            float(before_mean) if isinstance(before_mean, (int, float)) else None
+        ), (
+            float(after_mean) if isinstance(after_mean, (int, float)) else None
+        )
+
+    except Exception:
+        logger.exception("변화 탐지 실패 | mode=%s", mode_cfg.get("index_name"))
+        return None, None, None
+
+
+# ─────────────────────────────────────────────
+# [신규] 계절별 트렌드 — 월 단위 평균 시계열
+# ─────────────────────────────────────────────
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_seasonal_trend(
+    lat: float,
+    lon: float,
+    buffer_m: int,
+    year: int,
+    cloud_threshold: int,
+    mode_cfg: dict,
+) -> list[tuple[str, float]]:
+    """
+    지정 연도의 월별 평균값을 계산해 반환한다.
+
+    반환: [("2024-01", 0.35), ("2024-02", 0.41), ...]
+    데이터 없는 달은 결과에서 제외된다.
+
+    기존 get_time_series()는 짧은 기간 내 개별 촬영분을 반환하지만
+    이 함수는 월 단위로 묶어서 계절 패턴을 보여준다.
+    """
+    region = ee.Geometry.Point([lon, lat]).buffer(buffer_m)
+    scale = mode_cfg.get("native_resolution_m", 10)
+    index_name = mode_cfg["index_name"]
+    results: list[tuple[str, float]] = []
+
+    for month in range(1, 13):
+        start = f"{year}-{month:02d}-01"
+        # 각 월의 마지막 날 계산
+        if month == 12:
+            end = f"{year}-12-31"
+        else:
+            import calendar
+            last_day = calendar.monthrange(year, month)[1]
+            end = f"{year}-{month:02d}-{last_day}"
+
+        try:
+            collection = _filtered_collection(
+                region, start, end, cloud_threshold, mode_cfg
+            )
+            count_raw = _safe_get_info(collection.size(), context=f"seasonal_{month}")
+            count = int(count_raw) if count_raw is not None else 0
+            if count == 0:
+                continue
+
+            monthly_index = _compute_index_from_image(collection.median(), mode_cfg)
+            stats = _safe_get_info(
+                monthly_index.reduceRegion(
+                    reducer=ee.Reducer.mean(),
+                    geometry=region,
+                    scale=scale,
+                ),
+                context=f"seasonal_mean_{month}",
+            )
+            val = stats.get(index_name) if stats else None
+            if val is not None and isinstance(val, (int, float)):
+                results.append((f"{year}-{month:02d}", float(val)))
+
+        except Exception:
+            logger.warning("계절 트렌드 월 계산 실패 | year=%d month=%d", year, month)
+            continue
+
+    return results
+
+
+# ─────────────────────────────────────────────
+# [신규] 핫스팟 — 구역 내 상위/하위 픽셀 위치
+# ─────────────────────────────────────────────
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_hotspots(
+    lat: float,
+    lon: float,
+    buffer_m: int,
+    start_date: str,
+    end_date: str,
+    cloud_threshold: int,
+    mode_cfg: dict,
+    n_points: int = 5,
+) -> dict[str, list[tuple[float, float, float]]]:
+    """
+    구역 내에서 지수가 가장 높은/낮은 픽셀 위치를 반환한다.
+
+    반환:
+      {
+        "high": [(lat, lon, value), ...],  # 상위 n_points개
+        "low":  [(lat, lon, value), ...],  # 하위 n_points개
+      }
+
+    higher_is_worse 방향에 따라 "주의 지점"과 "양호 지점"으로 해석이 달라진다.
+    GEE sample()을 사용해 픽셀 단위 좌표를 추출한다.
+    """
+    region = ee.Geometry.Point([lon, lat]).buffer(buffer_m)
+    scale = mode_cfg.get("native_resolution_m", 10)
+    index_name = mode_cfg["index_name"]
+
+    try:
+        _, _, calculated_index = _build_index_image(
+            region, start_date, end_date, cloud_threshold, mode_cfg
+        )
+        clipped = calculated_index.clip(region)
+
+        # GEE sample()로 픽셀 좌표 + 값 추출 (최대 500개 샘플)
+        samples = clipped.sample(
+            region=region,
+            scale=scale,
+            numPixels=500,
+            geometries=True,  # 좌표 포함
+        )
+        raw = _safe_get_info(samples, context="hotspot_sample")
+        features = raw.get("features", []) if isinstance(raw, dict) else []
+
+        points: list[tuple[float, float, float]] = []
+        for f in features:
+            props = f.get("properties", {})
+            geom = f.get("geometry", {})
+            val = props.get(index_name)
+            coords = geom.get("coordinates", [])
+            if (val is not None
+                    and isinstance(val, (int, float))
+                    and len(coords) == 2):
+                points.append((coords[1], coords[0], float(val)))  # lat, lon, val
+
+        if not points:
+            return {"high": [], "low": []}
+
+        points.sort(key=lambda x: x[2])
+        return {
+            "low": points[:n_points],            # 값이 낮은 지점
+            "high": points[-n_points:][::-1],    # 값이 높은 지점
+        }
+
+    except Exception:
+        logger.exception("핫스팟 계산 실패 | mode=%s", mode_cfg.get("index_name"))
+        return {"high": [], "low": []}
