@@ -97,6 +97,11 @@ def _compute_index_from_image(image: ee.Image, mode_cfg: dict) -> ee.Image:
         # mode_cfg['band']로 VV 또는 VH 선택
         band = mode_cfg.get("band", "VV")
         return image.select(band).rename(index_name)
+    if calc_type == "precipitation_sum":
+        # CHIRPS 일강수량(precipitation) 밴드를 그대로 선택.
+        # 컬렉션을 sum()으로 합산한 뒤 이 함수가 호출되므로
+        # image는 이미 기간 합계 이미지다.
+        return image.select(mode_cfg["band"]).rename(index_name)
     raise ValueError(f"알 수 없는 calc_type: {calc_type}")
 
 
@@ -144,9 +149,18 @@ def _build_index_image(
     cloud_threshold: int,
     mode_cfg: dict,
 ) -> tuple[ee.ImageCollection, ee.Image, ee.Image]:
-    """공통 합성 이미지 및 지수 빌더 (lazy — 네트워크 미발생)."""
+    """공통 합성 이미지 및 지수 빌더 (lazy — 네트워크 미발생).
+
+    강수량(precipitation_sum)은 median() 대신 sum()으로 합산한다.
+    """
     collection = _filtered_collection(region, start_date, end_date, cloud_threshold, mode_cfg)
-    image = collection.median()
+
+    if mode_cfg.get("calc_type") == "precipitation_sum":
+        # 기간 내 일강수량 합계
+        image = collection.sum()
+    else:
+        image = collection.median()
+
     calculated_index = _compute_index_from_image(image, mode_cfg)
     return collection, image, calculated_index
 
@@ -270,17 +284,20 @@ def get_time_series(
     collection = _filtered_collection(region, start_date, end_date, cloud_threshold, mode_cfg)
     index_name: str = mode_cfg["index_name"]
     scale: int = mode_cfg.get("native_resolution_m", 10)
+    is_precip = mode_cfg.get("calc_type") == "precipitation_sum"
 
     def _reduce_single(image: ee.Image) -> ee.Feature:
         idx_img = _compute_index_from_image(image, mode_cfg)
-        mean_val = idx_img.reduceRegion(
-            reducer=ee.Reducer.mean(),
+        # 강수량은 일별 합계, 나머지는 평균
+        reducer = ee.Reducer.sum() if is_precip else ee.Reducer.mean()
+        val = idx_img.reduceRegion(
+            reducer=reducer,
             geometry=region,
             scale=scale,
         ).get(index_name)
         return ee.Feature(None, {
             "date": image.date().format("YYYY-MM-dd"),
-            "value": mean_val,
+            "value": val,
         })
 
     try:
