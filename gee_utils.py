@@ -90,6 +90,13 @@ def _compute_index_from_image(image: ee.Image, mode_cfg: dict) -> ee.Image:
             .subtract(273.15)
             .rename(index_name)
         )
+    if calc_type == "sar_backscatter":
+        # Sentinel-1 GRD 후방산란계수 처리
+        # VV 편파 선택 → 선형값(파워)을 dB로 변환: 10 * log10(VV)
+        # GEE S1 컬렉션은 이미 dB 단위이므로 select만 수행
+        # mode_cfg['band']로 VV 또는 VH 선택
+        band = mode_cfg.get("band", "VV")
+        return image.select(band).rename(index_name)
     raise ValueError(f"알 수 없는 calc_type: {calc_type}")
 
 
@@ -109,6 +116,24 @@ def _filtered_collection(
     cloud_prop = mode_cfg.get("cloud_filter_prop")
     if cloud_prop:
         collection = collection.filter(ee.Filter.lt(cloud_prop, cloud_threshold))
+
+    # SAR 전용 필터 — Sentinel-1은 구름 필터 대신 편파/궤도 방향 필터 적용
+    # instrumentMode: IW (Interferometric Wide — 한국 대부분 지역 커버)
+    # transmitterReceiverPolarisation: VV+VH 듀얼 편파
+    # orbitProperties_pass: DESCENDING (한국 기준 야간 촬영, 더 안정적)
+    if mode_cfg.get("calc_type") == "sar_backscatter":
+        collection = (
+            collection
+            .filter(ee.Filter.eq("instrumentMode", "IW"))
+            .filter(ee.Filter.listContains(
+                "transmitterReceiverPolarisation",
+                mode_cfg.get("band", "VV"),
+            ))
+            .filter(ee.Filter.eq(
+                "orbitProperties_pass",
+                mode_cfg.get("orbit_pass", "DESCENDING"),
+            ))
+        )
     return collection
 
 
@@ -346,6 +371,7 @@ def get_change_detection_tile_url(
         tile_url = get_ee_tile_url(diff_image.clip(region), diff_vis)
 
         # before/after 평균값 (수치 비교용)
+        # 단일 Reducer.mean() → 키가 "{index_name}" 그대로 반환됨
         reducer = ee.Reducer.mean()
         before_stats = _safe_get_info(
             before_index.reduceRegion(reducer=reducer, geometry=region, scale=scale),
@@ -357,14 +383,11 @@ def get_change_detection_tile_url(
         )
 
         idx = mode_cfg["index_name"]
-        before_mean = before_stats.get(f"{idx}_mean") if before_stats else None
-        after_mean = after_stats.get(f"{idx}_mean") if after_stats else None
+        logger.info("변화탐지 before_stats=%s after_stats=%s", before_stats, after_stats)
 
-        # reduceRegion 단일 reducer는 키가 index_name 그대로 반환됨
-        if before_mean is None and before_stats:
-            before_mean = before_stats.get(idx)
-        if after_mean is None and after_stats:
-            after_mean = after_stats.get(idx)
+        # 단일 reducer: 키가 index_name 그대로
+        before_mean = before_stats.get(idx) if isinstance(before_stats, dict) else None
+        after_mean  = after_stats.get(idx)  if isinstance(after_stats,  dict) else None
 
         return tile_url, (
             float(before_mean) if isinstance(before_mean, (int, float)) else None
@@ -372,9 +395,9 @@ def get_change_detection_tile_url(
             float(after_mean) if isinstance(after_mean, (int, float)) else None
         )
 
-    except Exception:
+    except Exception as exc:
         logger.exception("변화 탐지 실패 | mode=%s", mode_cfg.get("index_name"))
-        return None, None, None
+        return None, None, str(exc)
 
 
 # ─────────────────────────────────────────────

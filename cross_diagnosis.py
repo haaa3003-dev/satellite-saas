@@ -251,6 +251,135 @@ def interpret_ndbi_ndwi(
     )
 
 
+# ── [신규] SAR 교차 진단 함수들 ───────────────────────────────────────────────
+
+def interpret_sar_vv_ndwi(
+    sar_val: float, sar_cfg: dict,
+    ndwi_val: float, ndwi_cfg: dict,
+) -> tuple[str, str]:
+    """
+    SAR VV(토양수분)와 NDWI(지표 수분) 교차 진단.
+
+    SAR은 구름 관통, NDWI는 광학. 둘 다 수분을 보지만 감지 원리가 달라
+    조합하면 침수·수분 상태를 더 확실하게 판단할 수 있다.
+    SAR VV는 낮을수록(dB 음수 큰값) 수분 높음 → higher_is_worse=False지만
+    낮을수록 침수 위험이므로 _is_low가 "나쁜 쪽"을 올바르게 잡는다.
+    """
+    sar_bad  = _is_low(sar_val,  sar_cfg)   # VV 낮음 = 침수/수분 과다
+    ndwi_bad = _is_low(ndwi_val, ndwi_cfg)  # NDWI 낮음 = 수분 부족
+
+    if sar_bad and not ndwi_bad:
+        return (
+            "🚨 침수 고위험 — 레이더·광학 동시 감지",
+            "SAR 후방산란계수와 광학 수분지수(NDWI) 모두 수분 과다 신호를 보냅니다. "
+            "구름 여부와 무관하게 두 센서가 동시에 감지한 침수 가능성이 높습니다. "
+            "현장 확인 및 배수 조치를 즉시 검토하는 것을 권장합니다.",
+        )
+    if sar_bad and ndwi_bad:
+        return (
+            "🌧️ 레이더 수분 감지 (광학 미확인)",
+            "SAR은 수분 과다를 감지하나 광학 NDWI는 정상 범위입니다. "
+            "구름으로 광학 영상이 가려졌거나 지표 아래 토양 수분이 높은 상태일 수 있습니다. "
+            "장마·호우 직후에 자주 나타나는 패턴입니다.",
+        )
+    if not sar_bad and not ndwi_bad:
+        return (
+            "🌊 광학 수분 감지 (레이더 미확인)",
+            "NDWI는 수분이 높으나 SAR VV는 정상 범위입니다. "
+            "지표면 수면보다는 식생 내 수분이 높은 상태이거나 "
+            "얕은 수계(논 관개수 등)일 가능성이 있습니다.",
+        )
+    return (
+        "🟢 수분 상태 정상",
+        "SAR 후방산란계수와 광학 수분지수 모두 정상 범위입니다. "
+        "지표면 수분 과다 또는 침수 징후가 관측되지 않습니다.",
+    )
+
+
+def interpret_sar_vh_ndvi(
+    sar_val: float, sar_cfg: dict,
+    ndvi_val: float, ndvi_cfg: dict,
+) -> tuple[str, str]:
+    """
+    SAR VH(식생 구조)와 NDVI(식생 활성도) 교차 진단.
+
+    NDVI는 엽록소 활성도, SAR VH는 식생 3D 구조(잎·줄기 체적)를 본다.
+    구름이 많아 NDVI를 못 쓸 때 SAR VH로 보완할 수 있고,
+    둘의 불일치로 "자라고 있지만 구조가 약한" 상태를 포착한다.
+    """
+    sar_bad  = _is_low(sar_val,  sar_cfg)
+    ndvi_bad = _is_low(ndvi_val, ndvi_cfg)
+
+    if not sar_bad and not ndvi_bad:
+        return (
+            "🌿 식생 이중 확인 — 생육 양호",
+            "SAR VH(식생 구조)와 NDVI(엽록소 활성도) 모두 양호합니다. "
+            "광학·레이더 두 센서가 동시에 건강한 식생을 확인한 상태입니다.",
+        )
+    if sar_bad and ndvi_bad:
+        return (
+            "🟡 식생 부진 — 이중 확인",
+            "SAR VH와 NDVI가 모두 낮게 관측됩니다. "
+            "식생 구조와 광합성 활성도 양쪽이 저조한 상태입니다. "
+            "초기 파종 단계이거나 가뭄·병해충으로 인한 생육 부진일 가능성이 있습니다.",
+        )
+    if not sar_bad and ndvi_bad:
+        return (
+            "⚠️ 구조는 있으나 광합성 저조",
+            "SAR VH는 식생 구조가 있음을 감지하나 NDVI가 낮습니다. "
+            "잎이 있지만 엽록소 활성도가 낮은 상태 — 질소 결핍, 병해충 초기, "
+            "또는 수분 스트레스가 진행 중일 가능성이 있습니다.",
+        )
+    return (
+        "🌱 광합성 활발 — 구조 발달 중",
+        "NDVI는 높으나 SAR VH가 아직 낮습니다. "
+        "잎은 활발히 광합성하고 있으나 식생 체적이 아직 충분하지 않은 "
+        "초기~중기 생육 단계일 가능성이 있습니다.",
+    )
+
+
+def interpret_sar_vv_sar_vh(
+    vv_val: float, vv_cfg: dict,
+    vh_val: float, vh_cfg: dict,
+) -> tuple[str, str]:
+    """
+    SAR VV(토양수분)와 SAR VH(식생 구조) 교차 진단.
+
+    두 편파를 같이 보면 침수와 식생 쓰러짐(도복)을 구분할 수 있다.
+    VV 낮음 + VH 낮음 → 수면/나대지 (식생 없이 물만 있음)
+    VV 낮음 + VH 높음 → 침수된 식생 (물 위에 작물이 있음)
+    """
+    vv_bad = _is_low(vv_val, vv_cfg)
+    vh_bad = _is_low(vh_val, vh_cfg)
+
+    if vv_bad and vh_bad:
+        return (
+            "💧 수면 또는 나대지",
+            "VV·VH 모두 낮게 관측됩니다. "
+            "식생 없이 물만 있는 수면, 또는 나대지·모래밭일 가능성이 높습니다. "
+            "저수지·하천 등 영구 수계이거나 완전 침수 구역일 수 있습니다.",
+        )
+    if vv_bad and not vh_bad:
+        return (
+            "🌾 침수된 식생 (도복 의심)",
+            "VV는 낮고(수분 과다) VH는 상대적으로 유지됩니다. "
+            "식생이 쓰러지거나(도복) 침수된 상태에서 자주 나타나는 패턴입니다. "
+            "벼 도복, 침수 논, 범람원 식생에서 관측됩니다.",
+        )
+    if not vv_bad and vh_bad:
+        return (
+            "🌱 건조한 초기 식생",
+            "VV는 정상(건조)이나 VH가 낮습니다. "
+            "식생 구조가 아직 충분히 발달하지 않은 초기 생육 단계이거나 "
+            "건조한 나대지·밭작물 초기 상태일 가능성이 있습니다.",
+        )
+    return (
+        "🟢 정상 식생 (건조 환경)",
+        "VV·VH 모두 정상 범위입니다. "
+        "충분한 식생 구조를 가진 건강한 작물·산림 상태로 추정됩니다.",
+    )
+
+
 # ── 교차 쌍 정의 ───────────────────────────────────────────────────────────────
 # 한 모드가 여러 쌍에 속할 수 있다 (NDVI는 NDWI/NBR/NDRE 세 쌍에 속함).
 # 각 항목: (모드키A, 모드키B, 쌍 라벨, 해석함수)
@@ -273,26 +402,43 @@ CROSS_PAIRS: list[CrossPair] = [
         "도심 환경 복합 진단",
         interpret_no2_lst,
     ),
-    # [신규] NDRE ↔ NDVI: 잠재적 병해충·영양 결핍 조기 포착
     (
         "🌿 엽록소 농도 및 병해충 조기탐지 (NDRE)",
         "🌾 농작물 생육 분석 (NDVI)",
         "병해충·영양 결핍 교차 진단",
         interpret_ndre_ndvi,
     ),
-    # [신규] NDBI ↔ LST: 도시 열섬 원인 분석
     (
         "🏗️ 도시 확장 및 불투수면 탐지 (NDBI)",
         "♨️ 도심 폭염 및 열섬 현상 분석 (LST)",
         "도시 열섬 원인 교차 분석",
         interpret_ndbi_lst,
     ),
-    # [신규] NDBI ↔ NDWI: 도시 침수 취약성 평가
     (
         "🏗️ 도시 확장 및 불투수면 탐지 (NDBI)",
         "🌊 저수지 및 홍수 모니터링 (NDWI)",
         "도시 침수 취약성 교차 평가",
         interpret_ndbi_ndwi,
+    ),
+    # [신규] SAR ↔ 광학 교차 진단
+    (
+        "🌧️ 토양수분 및 침수 탐지 SAR (VV)",
+        "🌊 저수지 및 홍수 모니터링 (NDWI)",
+        "침수 이중 확인 (레이더+광학)",
+        interpret_sar_vv_ndwi,
+    ),
+    (
+        "🌲 산림·작물 구조 탐지 SAR (VH)",
+        "🌾 농작물 생육 분석 (NDVI)",
+        "식생 상태 이중 확인 (레이더+광학)",
+        interpret_sar_vh_ndvi,
+    ),
+    # [신규] SAR VV ↔ SAR VH: 침수 vs 식생 구조 구분
+    (
+        "🌧️ 토양수분 및 침수 탐지 SAR (VV)",
+        "🌲 산림·작물 구조 탐지 SAR (VH)",
+        "침수·도복 vs 식생 구조 구분 (SAR 이중 편파)",
+        interpret_sar_vv_sar_vh,
     ),
 ]
 
