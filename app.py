@@ -441,8 +441,8 @@ with tab_change:
     col_b1, col_b2 = st.columns(2)
     with col_b1:
         st.markdown("**📅 비교 기준 기간 (Before)**")
-        before_e = st.date_input("종료일", s_date, key="before_e")
-        before_s = st.date_input("시작일", before_e - timedelta(days=30), key="before_s")
+        before_s = st.date_input("시작일", s_date - timedelta(days=365), key="before_s")
+        before_e = st.date_input("종료일", s_date - timedelta(days=335), key="before_e")
     with col_b2:
         st.markdown("**📅 비교 대상 기간 (After)**")
         after_s = st.date_input("시작일", s_date, key="after_s")
@@ -451,45 +451,57 @@ with tab_change:
     change_btn = st.button("🔄 변화 탐지 실행", type="primary", key="change_btn")
 
     if change_btn:
-        with st.spinner("두 기간 위성 이미지를 비교하는 중..."):
-            tile_url, before_mean, after_mean = get_change_detection_tile_url(
-                lat, lon, buffer_m,
-                str(before_s), str(before_e),
-                str(after_s), str(after_e),
-                cloud, cfg,
-            )
-
-        if tile_url is None:
-            st.warning("⚠️ 변화 탐지 이미지를 생성할 수 없습니다. 기간을 조정하거나 구름 허용률을 높여보세요.")
+        # 날짜 역전 체크
+        if before_s >= before_e:
+            st.warning("⚠️ Before 시작일이 종료일보다 늦습니다. 날짜를 다시 확인해주세요.")
+        elif after_s >= after_e:
+            st.warning("⚠️ After 시작일이 종료일보다 늦습니다. 날짜를 다시 확인해주세요.")
+        elif before_e > after_s:
+            st.warning("⚠️ Before 종료일이 After 시작일보다 늦습니다. 두 기간이 겹치지 않게 설정해주세요.")
         else:
-            # 수치 요약
-            col_c1, col_c2, col_c3 = st.columns(3)
-            with col_c1:
-                st.metric("Before 평균", f"{before_mean:.4f}" if before_mean is not None else "—")
-            with col_c2:
-                st.metric("After 평균", f"{after_mean:.4f}" if after_mean is not None else "—")
-            with col_c3:
-                if before_mean and after_mean:
-                    diff = after_mean - before_mean
-                    direction = "증가 ▲" if diff > 0 else "감소 ▼"
-                    st.metric("변화량", f"{diff:+.4f}", delta=direction)
+            with st.spinner("두 기간 위성 이미지를 비교하는 중..."):
+                tile_url, before_mean, after_mean = get_change_detection_tile_url(
+                    lat, lon, buffer_m,
+                    str(before_s), str(before_e),
+                    str(after_s), str(after_e),
+                    cloud, cfg,
+                )
 
-            # 변화 탐지 지도
-            m_change = folium.Map(location=[lat, lon], zoom_start=13)
-            folium.TileLayer(
-                tiles=tile_url,
-                attr="Google Earth Engine",
-                name="변화량 (After - Before)",
-                overlay=True,
-                control=True,
-            ).add_to(m_change)
-            st_folium(m_change, width="100%", height=500, returned_objects=[])
+            if tile_url is None:
+                err_msg = after_mean if isinstance(after_mean, str) else ""
+                st.warning("⚠️ 변화 탐지 이미지를 생성할 수 없습니다. 기간을 조정하거나 구름 허용률을 높여보세요.")
+                if err_msg:
+                    with st.expander("🔍 상세 오류 내용 (디버깅용)"):
+                        st.code(err_msg)
+            else:
+                # 수치 요약
+                col_c1, col_c2, col_c3 = st.columns(3)
+                with col_c1:
+                    st.metric("Before 평균", f"{before_mean:.4f}" if before_mean is not None else "—")
+                with col_c2:
+                    st.metric("After 평균", f"{after_mean:.4f}" if after_mean is not None else "—")
+                with col_c3:
+                    if before_mean and after_mean:
+                        diff = after_mean - before_mean
+                        direction = "증가 ▲" if diff > 0 else "감소 ▼"
+                        st.metric("변화량", f"{diff:+.4f}", delta=direction)
 
-            st.caption(
-                "🔵 파란색: 지수 증가 (식생 회복 / 수분 증가 / 불투수면 증가 등) | "
-                "🔴 붉은색: 지수 감소 (식생 소실 / 건조화 / 녹지 감소 등) | "
-                "⚪ 흰색: 변화 없음"
-            )
+                # 변화 탐지 지도
+                m_change = folium.Map(location=[lat, lon], zoom_start=13)
+                folium.TileLayer(
+                    tiles=tile_url,
+                    attr="Google Earth Engine",
+                    name="변화량 (After - Before)",
+                    overlay=True,
+                    control=True,
+                ).add_to(m_change)
+                st_folium(m_change, width="100%", height=500, returned_objects=[])
+
+                st.caption(
+                    "🔵 파란색: 지수 증가 (식생 회복 / 수분 증가 / 불투수면 증가 등) | "
+                    "🔴 붉은색: 지수 감소 (식생 소실 / 건조화 / 녹지 감소 등) | "
+                    "⚪ 흰색: 변화 없음"
+                )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
