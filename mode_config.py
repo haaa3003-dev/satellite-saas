@@ -323,12 +323,13 @@ mode_config: dict[str, dict] = {
             "#f7fbff", "#deebf7", "#c6dbef", "#9ecae1",
             "#6baed6", "#3182bd", "#08519c",
         ],
-        # [수정] min/max를 실제 한국 30일 강수량 범위로 조정
-        # 한국 평균: 건기 20~50mm, 우기 200~400mm
-        "min": 0.0, "max": 400.0,
-        "anomaly_min": -100.0, "anomaly_max": 100.0,
-        "threshold": 50.0,
-        "baseline": 20.0, "ceil": 350.0,
+        # [수정] 한국 30일 강수량 실측 범위
+        # 건기(12~2월): 10~30mm / 봄·가을: 30~100mm / 우기(6~9월): 100~400mm
+        # min을 0이 아닌 1로, max를 200으로 줄여서 건기에도 색이 나오게 함
+        "min": 1.0, "max": 200.0,
+        "anomaly_min": -50.0, "anomaly_max": 50.0,
+        "threshold": 30.0,   # 30일 기준 30mm 이하 = 가뭄 주의
+        "baseline": 10.0, "ceil": 180.0,
         "higher_is_worse": False,
         "desc_good": (
             "선택 기간 내 누적 강수량이 충분합니다. "

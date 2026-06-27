@@ -152,12 +152,14 @@ def _build_index_image(
     """공통 합성 이미지 및 지수 빌더 (lazy — 네트워크 미발생).
 
     강수량(precipitation_sum)은 median() 대신 sum()으로 합산한다.
+    단, sum()은 ImageCollection 전체를 픽셀 단위로 더하는 것이므로
+    일별 강수량이 그대로 누적되어 기간 누적강수량(mm)이 된다.
     """
     collection = _filtered_collection(region, start_date, end_date, cloud_threshold, mode_cfg)
 
     if mode_cfg.get("calc_type") == "precipitation_sum":
-        # 기간 내 일강수량 합계
-        image = collection.sum()
+        # 일별 precipitation 밴드를 기간 내 모두 합산 → 누적강수량(mm)
+        image = collection.select(mode_cfg["band"]).sum()
     else:
         image = collection.median()
 
