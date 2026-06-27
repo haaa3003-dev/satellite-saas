@@ -272,7 +272,7 @@ with tab_main:
             overlay=True,
             control=True,
         ).add_to(m)
-    st_folium(m, width="100%", height=500, returned_objects=[])
+    st_folium(m, width="100%", height=500, returned_objects=[], key="main_map")
 
     # ── B. 차트 ───────────────────────────────────────────────────────────────
     st.markdown("---")
@@ -495,7 +495,7 @@ with tab_change:
                     overlay=True,
                     control=True,
                 ).add_to(m_change)
-                st_folium(m_change, width="100%", height=500, returned_objects=[])
+                st_folium(m_change, width="100%", height=500, returned_objects=[], key="change_map")
 
                 st.caption(
                     "🔵 파란색: 지수 증가 (식생 회복 / 수분 증가 / 불투수면 증가 등) | "
@@ -690,7 +690,7 @@ with tab_hotspot:
                 icon=folium.Icon(color="gray", icon="crosshairs", prefix="fa"),
             ).add_to(m_hot)
 
-            st_folium(m_hot, width="100%", height=500, returned_objects=[])
+            st_folium(m_hot, width="100%", height=500, returned_objects=[], key="hotspot_map")
 
             # 수치 테이블
             col_h1, col_h2 = st.columns(2)
