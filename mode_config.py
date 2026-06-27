@@ -318,7 +318,7 @@ mode_config: dict[str, dict] = {
         # [수정] CHIRPS는 5.5km 해상도이므로 기본 버퍼 3km로는 픽셀이 안 잡힘.
         # 분석 버퍼를 30km로 강제 확대한다.
         "native_resolution_m": 5500,
-        "analysis_buffer_m": 30000,  # CHIRPS 전용 버퍼 — app/gee_utils에서 우선 사용
+        "analysis_buffer_m": 10000,  # 10km — CHIRPS 픽셀(5.5km) 여러 개가 걸리는 최소 크기
         "palette": [
             "#f7fbff", "#deebf7", "#c6dbef", "#9ecae1",
             "#6baed6", "#3182bd", "#08519c",

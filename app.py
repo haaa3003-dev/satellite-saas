@@ -236,7 +236,8 @@ res: AnalysisResult = st.session_state.analysis_res
 cfg: dict = mode_config[res.request.mode_key]
 lat = res.request.region.lat
 lon = res.request.region.lon
-buffer_m = res.request.region.buffer_m
+# 모드별 전용 버퍼가 있으면 우선 사용 (CHIRPS 등)
+buffer_m = cfg.get("analysis_buffer_m", res.request.region.buffer_m)
 region_name = res.request.region.name
 s_date = res.request.start_date
 e_date = res.request.end_date
@@ -244,6 +245,16 @@ cloud = res.request.cloud_threshold
 cur = res.current
 good = cur.mean is not None and is_good_value(cur.mean, cfg)
 avg_display = cur.mean if cur.mean is not None else 0.0
+
+# 버퍼 크기에 따른 줌 레벨 자동 계산
+def _buffer_to_zoom(buf_m: int) -> int:
+    if buf_m <= 3000:   return 13
+    if buf_m <= 5000:   return 12
+    if buf_m <= 10000:  return 11
+    if buf_m <= 20000:  return 10
+    return 9
+
+map_zoom = _buffer_to_zoom(buffer_m)
 
 st.markdown("---")
 
@@ -263,7 +274,7 @@ with tab_main:
 
     # ── A. 지도 ───────────────────────────────────────────────────────────────
     st.subheader(f"🗺️ {region_name} 위성 지도 ({cfg['index_name']})")
-    m = folium.Map(location=[lat, lon], zoom_start=13)
+    m = folium.Map(location=[lat, lon], zoom_start=map_zoom)
     if res.tile_url:
         folium.TileLayer(
             tiles=res.tile_url,
@@ -648,7 +659,7 @@ with tab_hotspot:
                 safe_color = "green"
 
             # 핫스팟 지도
-            m_hot = folium.Map(location=[lat, lon], zoom_start=14)
+            m_hot = folium.Map(location=[lat, lon], zoom_start=map_zoom + 1)
 
             if res.tile_url:
                 folium.TileLayer(
