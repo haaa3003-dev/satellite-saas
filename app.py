@@ -51,7 +51,7 @@ from gee_utils import (
     get_seasonal_trend,
     init_gee,
 )
-from mode_config import mode_config, preset_coords
+from mode_config import domain_config, mode_config, preset_coords
 from models import AnalysisRequest, AnalysisResult, RegionInfo
 from report_builder import generate_excel_report
 
@@ -72,9 +72,9 @@ st.set_page_config(page_title="K-Sat 오픈 탐색기", page_icon="🌍", layout
 st.title("🌍 K-Sat 위성 데이터 오픈 탐색기")
 st.caption("누구나 자유롭게 분석하고 활용하는 위성 기반 환경·재해 모니터링 플랫폼")
 st.info(
-    "💡 **[사용법]** ① 아래 지도를 원하는 지역으로 이동하고 줌인하세요. "
-    "② 지명 검색이나 프리셋으로 빠르게 이동할 수 있습니다. "
-    "③ 화면에 보이는 범위가 분석 구역이 됩니다. ④ 날짜와 모드를 설정하고 버튼을 누르세요."
+    "💡 **[사용법]** ① 도메인과 분석 모드를 선택하세요. "
+    "② 지도를 원하는 구역으로 줌인하세요. 화면 범위가 분석 구역이 됩니다. "
+    "③ 날짜를 설정하고 버튼을 누르세요."
 )
 st.markdown("---")
 
@@ -90,15 +90,31 @@ if not init_gee():
     st.stop()
 
 # ─────────────────────────────────────────────
-# 2. 사이드바
+# 2. 사이드바 — 도메인 → 모드 2단계 선택
 # ─────────────────────────────────────────────
 st.sidebar.header("🛠️ 탐색 설정")
+
+# ① 도메인 선택
+selected_domain: str = st.sidebar.selectbox(
+    "🗂️ 분석 도메인",
+    list(domain_config.keys()),
+    help="분석 목적에 맞는 도메인을 먼저 선택하세요.",
+)
+domain_cfg = domain_config[selected_domain]
+st.sidebar.caption(domain_cfg["description"])
+st.sidebar.markdown("---")
+
+# ② 해당 도메인의 모드만 표시
+available_modes = domain_cfg["modes"]
 analysis_mode: str = st.sidebar.selectbox(
-    "🔎 관측 모드 선택",
-    list(mode_config.keys()),
+    "🔎 관측 모드",
+    available_modes,
 )
 st.sidebar.markdown("---")
 st.sidebar.caption("Powered by Google Earth Engine & K-Sat Team")
+
+# 도메인별 활성 탭 목록
+active_tabs: list[str] = domain_cfg["tabs"]
 
 # ─────────────────────────────────────────────
 # 3. 지역 선택 — 지도 이동 + 현재 화면 범위가 분석 구역
@@ -138,9 +154,12 @@ with col_s1:
         on_change=_clear_preset,
     )
 with col_s2:
+    # 도메인에 맞는 프리셋만 필터링
+    domain_preset_keys = domain_cfg.get("preset_keys", [])
+    domain_presets = {k: preset_coords[k] for k in domain_preset_keys if k in preset_coords}
     st.selectbox(
-        "📌 주요 관심 지역 빠르게 이동",
-        ["직접 검색"] + list(preset_coords.keys()),
+        "📌 추천 지역",
+        ["직접 검색"] + list(domain_presets.keys()),
         key="preset_select",
         on_change=_clear_search,
     )
@@ -162,8 +181,8 @@ if st.session_state.search_input:
 
 elif st.session_state.preset_select != "직접 검색":
     preset = st.session_state.preset_select
-    if preset in preset_coords:
-        st.session_state.map_center = list(preset_coords[preset])
+    if preset in domain_presets:
+        st.session_state.map_center = list(domain_presets[preset])
         st.session_state.map_zoom = 13
         st.session_state.region_name = preset
 
@@ -303,14 +322,28 @@ map_zoom = _bbox_to_zoom(*bbox)
 
 st.markdown("---")
 
-# ── 탭 구성 ───────────────────────────────────────────────────────────────────
-tab_main, tab_change, tab_seasonal, tab_hotspot, tab_multi = st.tabs([
-    "📊 기본 분석",
-    "🔄 변화 탐지",
-    "📅 계절 트렌드",
-    "🎯 핫스팟",
-    "📍 다중 지점 비교",
-])
+# ── 탭 구성 — 도메인별 active_tabs만 표시 ────────────────────────────────────
+ALL_TABS = {
+    "📊 기본 분석":      None,
+    "🔄 변화 탐지":      None,
+    "📅 계절 트렌드":    None,
+    "🎯 핫스팟":         None,
+    "📍 다중 지점 비교": None,
+}
+
+# active_tabs에 기본 분석은 항상 포함
+if "📊 기본 분석" not in active_tabs:
+    active_tabs = ["📊 기본 분석"] + active_tabs
+
+tab_objects = st.tabs(active_tabs)
+tab_map = dict(zip(active_tabs, tab_objects))
+
+# 편의 변수 — 없는 탭은 None
+tab_main     = tab_map.get("📊 기본 분석")
+tab_change   = tab_map.get("🔄 변화 탐지")
+tab_seasonal = tab_map.get("📅 계절 트렌드")
+tab_hotspot  = tab_map.get("🎯 핫스팟")
+tab_multi    = tab_map.get("📍 다중 지점 비교")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1 — 기본 분석 (기존 화면 그대로)
@@ -487,7 +520,8 @@ with tab_main:
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2 — 변화 탐지
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_change:
+if tab_change:
+  with tab_change:
     st.subheader("🔄 두 기간 비교 — 변화 탐지")
     st.caption(
         "두 기간의 위성 지수를 비교해 어디가 얼마나 변했는지 지도로 보여줍니다. "
@@ -563,7 +597,8 @@ with tab_change:
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3 — 계절 트렌드
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_seasonal:
+if tab_seasonal:
+  with tab_seasonal:
     st.subheader("📅 월별 · 계절별 트렌드")
     st.caption(
         "선택한 연도의 월별 평균값을 계산합니다. "
@@ -661,7 +696,8 @@ with tab_seasonal:
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 4 — 핫스팟
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_hotspot:
+if tab_hotspot:
+  with tab_hotspot:
     st.subheader("🎯 구역 내 핫스팟 위치")
     st.caption(
         "분석 구역 안에서 지수가 가장 높거나 낮은 지점을 지도 위에 표시합니다. "
@@ -778,7 +814,8 @@ with tab_hotspot:
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 5 — 다중 지점 동시 비교
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_multi:
+if tab_multi:
+  with tab_multi:
     import pandas as pd
 
     st.subheader("📍 다중 지점 동시 비교")
