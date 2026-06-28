@@ -116,6 +116,11 @@ st.sidebar.caption("Powered by Google Earth Engine & K-Sat Team")
 # 도메인별 활성 탭 목록
 active_tabs: list[str] = domain_cfg["tabs"]
 
+# 도메인이 바뀌면 프리셋 초기화
+if st.session_state.get("last_domain") != selected_domain:
+    st.session_state.last_domain = selected_domain
+    st.session_state.preset_select = "직접 검색"
+
 # ─────────────────────────────────────────────
 # 3. 지역 선택 — 지도 이동 + 현재 화면 범위가 분석 구역
 # ─────────────────────────────────────────────
