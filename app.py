@@ -368,6 +368,41 @@ with tab_main:
         ).add_to(m)
     st_folium(m, width="100%", height=500, returned_objects=[], key="main_map")
 
+    # ── 컬러바 범례 ──────────────────────────────────────────────────────────
+    palette = cfg.get("palette", [])
+    v_min, v_max = cfg.get("min", 0), cfg.get("max", 1)
+    label = cfg.get("label", cfg["index_name"])
+    cur_mean = cur.mean
+
+    if palette:
+        gradient = ", ".join(palette)
+        mean_pct = 0.0
+        if cur_mean is not None and v_max != v_min:
+            mean_pct = max(0.0, min(1.0, (cur_mean - v_min) / (v_max - v_min))) * 100
+        marker_html = (
+            f'<div style="position:absolute;left:{mean_pct:.1f}%;top:-5px;'
+            f'transform:translateX(-50%);width:3px;height:28px;'
+            f'background:white;border:1.5px solid #333;border-radius:2px;"></div>'
+            if cur_mean is not None else ""
+        )
+        mean_label = (
+            f'<span style="font-weight:600;color:#333;">▲ 현재 평균 {cur_mean:.3f}</span>'
+            if cur_mean is not None else ""
+        )
+        st.markdown(
+            f"""<div style="margin:8px 0 16px 0;">
+  <div style="font-size:12px;color:#888;margin-bottom:4px;">{label} 색상 범례</div>
+  <div style="position:relative;height:18px;border-radius:6px;overflow:visible;
+              background:linear-gradient(to right,{gradient});margin-bottom:6px;">
+    {marker_html}
+  </div>
+  <div style="display:flex;justify-content:space-between;font-size:11px;color:#666;">
+    <span>{v_min}</span>{mean_label}<span>{v_max}</span>
+  </div>
+</div>""",
+            unsafe_allow_html=True,
+        )
+
     # ── B. 차트 ───────────────────────────────────────────────────────────────
     st.markdown("---")
     st.subheader("📊 데이터 분석 결과")

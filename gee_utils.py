@@ -151,19 +151,33 @@ def _build_index_image(
 ) -> tuple[ee.ImageCollection, ee.Image, ee.Image]:
     """공통 합성 이미지 및 지수 빌더 (lazy — 네트워크 미발생).
 
-    강수량(precipitation_sum)은 median() 대신 sum()으로 합산한다.
-    단, sum()은 ImageCollection 전체를 픽셀 단위로 더하는 것이므로
-    일별 강수량이 그대로 누적되어 기간 누적강수량(mm)이 된다.
+    landcover_mask가 정의된 모드는 ESA WorldCover 10m 기준으로
+    해당 토지 유형의 픽셀만 남기고 나머지를 마스킹한다.
+    → 산림 모드면 산림 픽셀만, 수체 모드면 강·호수 픽셀만 분석됨.
     """
     collection = _filtered_collection(region, start_date, end_date, cloud_threshold, mode_cfg)
-
-    if mode_cfg.get("calc_type") == "precipitation_sum":
-        # 일별 precipitation 밴드를 기간 내 모두 합산 → 누적강수량(mm)
-        image = collection.select(mode_cfg["band"]).sum()
-    else:
-        image = collection.median()
-
+    image = collection.median()
     calculated_index = _compute_index_from_image(image, mode_cfg)
+
+    # ── 토지피복 마스킹 (ESA WorldCover 10m) ──────────────────────────────────
+    # mode_cfg에 landcover_mask 키가 있고 None이 아닌 경우에만 적용.
+    # ESA WorldCover 클래스 코드:
+    #   10=수목  20=관목  30=초지  40=경작지  50=도시/건물
+    #   60=나지  70=설빙  80=수체  90=습지   95=맹그로브  100=이끼
+    lc_classes = mode_cfg.get("landcover_mask")
+    if lc_classes:
+        worldcover = (
+            ee.ImageCollection("ESA/WorldCover/v200")
+            .filterBounds(region)
+            .first()
+            .select("Map")
+        )
+        # 지정 클래스 중 하나라도 해당하면 True인 마스크 생성
+        lc_mask = worldcover.eq(lc_classes[0])
+        for cls in lc_classes[1:]:
+            lc_mask = lc_mask.Or(worldcover.eq(cls))
+        calculated_index = calculated_index.updateMask(lc_mask)
+
     return collection, image, calculated_index
 
 
