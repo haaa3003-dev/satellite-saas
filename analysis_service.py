@@ -98,6 +98,22 @@ def run_analysis(request: AnalysisRequest) -> AnalysisResult:
     _, calculated_index = get_satellite_index_for_period(
         geo_region, s_date, e_date, cloud, cfg
     )
+
+    # 토지피복 마스킹 — 타일 시각화에도 동일하게 적용
+    # 마스킹하지 않으면 bbox 전체가 직사각형으로 보임
+    lc_classes = cfg.get("landcover_mask")
+    if lc_classes:
+        worldcover = (
+            ee.ImageCollection("ESA/WorldCover/v200")
+            .filterBounds(geo_region)
+            .first()
+            .select("Map")
+        )
+        lc_mask = worldcover.eq(lc_classes[0])
+        for cls in lc_classes[1:]:
+            lc_mask = lc_mask.Or(worldcover.eq(cls))
+        calculated_index = calculated_index.updateMask(lc_mask)
+
     vis_params = {"min": cfg["min"], "max": cfg["max"], "palette": cfg["palette"]}
     tile_url = get_ee_tile_url(calculated_index.clip(geo_region), vis_params)
 
