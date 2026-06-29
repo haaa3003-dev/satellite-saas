@@ -417,7 +417,7 @@ def get_change_detection_tile_url(
             "palette": ["#d73027", "#f46d43", "#fdae61", "#ffffff",
                         "#74add1", "#4575b4", "#313695"],
         }
-        tile_url = get_ee_tile_url(diff_image.clip(region), diff_vis)
+        tile_url = get_ee_tile_url(diff_image, diff_vis)
 
         # before/after 평균값 (수치 비교용)
         # 단일 Reducer.mean() → 키가 "{index_name}" 그대로 반환됨
@@ -529,10 +529,9 @@ def get_hotspots(
         _, _, calculated_index = _build_index_image(
             region, start_date, end_date, cloud_threshold, mode_cfg
         )
-        clipped = calculated_index.clip(region)
 
         # GEE sample()로 픽셀 좌표 + 값 추출 (최대 500개 샘플)
-        samples = clipped.sample(
+        samples = calculated_index.sample(
             region=region,
             scale=scale,
             numPixels=500,
@@ -645,7 +644,7 @@ def get_multi_point_stats(
             # 타일 URL (지도 레이어용)
             try:
                 entry["tile_url"] = get_ee_tile_url(
-                    calculated_index.clip(region), vis_params
+                    calculated_index, vis_params
                 )
             except Exception:
                 logger.warning("타일 URL 생성 실패 | point=%s", name)

@@ -139,7 +139,9 @@ def run_analysis(request: AnalysisRequest) -> AnalysisResult:
         calculated_index = calculated_index.updateMask(combined_mask)
 
     vis_params = {"min": cfg["min"], "max": cfg["max"], "palette": cfg["palette"]}
-    tile_url = get_ee_tile_url(calculated_index.clip(geo_region), vis_params)
+    # clip(geo_region) 제거 — bbox로 자르면 직사각형이 됨
+    # 마스킹된 픽셀은 자동으로 투명 처리되므로 clip 불필요
+    tile_url = get_ee_tile_url(calculated_index, vis_params)
 
     logger.info("Analysis completed | mode=%s count=%d", request.mode_key, count)
 
