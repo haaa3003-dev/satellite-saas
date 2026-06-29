@@ -100,6 +100,10 @@ def run_analysis(request: AnalysisRequest) -> AnalysisResult:
     )
 
     # 토지피복 이중 마스킹 — ESA WorldCover OR Dynamic World
+    # 순서 중요: clip(bbox) 먼저 → 그 다음 마스킹
+    # clip 없이 마스킹만 하면 전 세계 렌더링으로 지도가 축소됨
+    clipped_index = calculated_index.clip(geo_region)
+
     lc_classes = cfg.get("landcover_mask")
     dw_classes = cfg.get("dw_mask")
 
@@ -136,12 +140,10 @@ def run_analysis(request: AnalysisRequest) -> AnalysisResult:
         else:
             combined_mask = dw_mask
 
-        calculated_index = calculated_index.updateMask(combined_mask)
+        clipped_index = clipped_index.updateMask(combined_mask)
 
     vis_params = {"min": cfg["min"], "max": cfg["max"], "palette": cfg["palette"]}
-    # clip(geo_region) 제거 — bbox로 자르면 직사각형이 됨
-    # 마스킹된 픽셀은 자동으로 투명 처리되므로 clip 불필요
-    tile_url = get_ee_tile_url(calculated_index, vis_params)
+    tile_url = get_ee_tile_url(clipped_index, vis_params)
 
     logger.info("Analysis completed | mode=%s count=%d", request.mode_key, count)
 

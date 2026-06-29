@@ -159,20 +159,16 @@ def _build_index_image(
     image = collection.median()
     calculated_index = _compute_index_from_image(image, mode_cfg)
 
-    # ── 토지피복 이중 마스킹 (ESA WorldCover OR Dynamic World) ───────────────
-    # ESA WorldCover v200: 연간 업데이트(2020/2021), 안정적
-    # Dynamic World v1: 매주 업데이트, 최신이지만 노이즈 있음
-    # 둘을 OR로 합치면 서로의 단점을 보완 → 더 정밀한 경계
-    #
-    # ESA WorldCover 클래스:
-    #   10=수목  20=관목  30=초지  40=경작지  50=도시  80=수체
-    # Dynamic World 클래스:
-    #   0=수체  1=수목  2=초지  4=농경지  6=건물
+    # ── 토지피복 이중 마스킹 (clip 후 적용) ──────────────────────────────────
+    # 순서: clip(region) 먼저 → 마스킹 나중
+    # clip이 없으면 전 세계 렌더링으로 지도 축소됨
+    # clip이 마스킹 뒤에 오면 직사각형이 씌워짐
     lc_classes = mode_cfg.get("landcover_mask")
     dw_classes = mode_cfg.get("dw_mask")
 
     if lc_classes or dw_classes:
-        # ESA WorldCover 마스크
+        clipped = calculated_index.clip(region)
+
         esa_mask = None
         if lc_classes:
             worldcover = (
@@ -185,22 +181,19 @@ def _build_index_image(
             for cls in lc_classes[1:]:
                 esa_mask = esa_mask.Or(worldcover.eq(cls))
 
-        # Dynamic World 마스크 (해당 기간 최빈값 사용)
         dw_mask = None
         if dw_classes:
-            dw_collection = (
+            dw_image = (
                 ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1")
                 .filterBounds(region)
                 .filterDate(start_date, end_date)
                 .select("label")
+                .mode()
             )
-            # 기간 내 최빈값(mode)으로 집계 → 노이즈 감소
-            dw_image = dw_collection.mode()
             dw_mask = dw_image.eq(dw_classes[0])
             for cls in dw_classes[1:]:
                 dw_mask = dw_mask.Or(dw_image.eq(cls))
 
-        # 두 마스크 OR 합성
         if esa_mask is not None and dw_mask is not None:
             combined_mask = esa_mask.Or(dw_mask)
         elif esa_mask is not None:
@@ -208,7 +201,7 @@ def _build_index_image(
         else:
             combined_mask = dw_mask
 
-        calculated_index = calculated_index.updateMask(combined_mask)
+        calculated_index = clipped.updateMask(combined_mask)
 
     return collection, image, calculated_index
 
@@ -417,7 +410,7 @@ def get_change_detection_tile_url(
             "palette": ["#d73027", "#f46d43", "#fdae61", "#ffffff",
                         "#74add1", "#4575b4", "#313695"],
         }
-        tile_url = get_ee_tile_url(diff_image, diff_vis)
+        tile_url = get_ee_tile_url(diff_image.clip(region), diff_vis)
 
         # before/after 평균값 (수치 비교용)
         # 단일 Reducer.mean() → 키가 "{index_name}" 그대로 반환됨
@@ -644,7 +637,7 @@ def get_multi_point_stats(
             # 타일 URL (지도 레이어용)
             try:
                 entry["tile_url"] = get_ee_tile_url(
-                    calculated_index, vis_params
+                    calculated_index.clip(region), vis_params
                 )
             except Exception:
                 logger.warning("타일 URL 생성 실패 | point=%s", name)
