@@ -51,7 +51,7 @@ from gee_utils import (
     get_seasonal_trend,
     init_gee,
 )
-from mode_config import domain_config, mode_config, preset_coords
+from mode_config import domain_config, mode_config, preset_config, preset_coords
 from models import AnalysisRequest, AnalysisResult, RegionInfo
 from report_builder import generate_excel_report
 
@@ -136,15 +136,19 @@ def _clear_search() -> None:
 
 
 # 세션 초기화
-_first_preset_key = next(iter(preset_coords))
-_first_coords = preset_coords[_first_preset_key]
+_first_preset_key = next(iter(preset_config))
+_first_cfg = preset_config[_first_preset_key]
+_first_coord = _first_cfg["coord"]
 
 if "search_input" not in st.session_state:
     st.session_state.search_input = ""
 if "preset_select" not in st.session_state:
     st.session_state.preset_select = "직접 검색"
 if "map_center" not in st.session_state:
-    st.session_state.map_center = [_first_coords[0], _first_coords[1]]
+    st.session_state.map_center = [
+        (_first_coord[1] + _first_coord[3]) / 2,
+        (_first_coord[0] + _first_coord[2]) / 2,
+    ]
 if "map_zoom" not in st.session_state:
     st.session_state.map_zoom = 12
 if "region_name" not in st.session_state:
@@ -153,15 +157,15 @@ if "region_name" not in st.session_state:
 col_s1, col_s2 = st.columns([2, 1])
 with col_s1:
     st.text_input(
-        "🔍 지명 또는 주소를 입력하세요",
-        placeholder="예: 춘천시 소양강, 새만금, 지리산 (입력 후 Enter)",
+        "🔍 지명·작물·수체 검색",
+        placeholder="예: 충주 사과밭, 소양강댐, 서울 중구, 영산강 (입력 후 Enter)",
         key="search_input",
         on_change=_clear_preset,
     )
 with col_s2:
     # 도메인에 맞는 프리셋만 필터링
     domain_preset_keys = domain_cfg.get("preset_keys", [])
-    domain_presets = {k: preset_coords[k] for k in domain_preset_keys if k in preset_coords}
+    domain_presets = {k: preset_config[k] for k in domain_preset_keys if k in preset_config}
     st.selectbox(
         "📌 추천 지역",
         ["직접 검색"] + list(domain_presets.keys()),
@@ -169,7 +173,7 @@ with col_s2:
         on_change=_clear_search,
     )
 
-# 지역 좌표 업데이트 (지도 중심점 이동)
+# 지역 이동 처리
 if st.session_state.search_input:
     try:
         geo_results = geocode_place(st.session_state.search_input)
@@ -187,9 +191,13 @@ if st.session_state.search_input:
 elif st.session_state.preset_select != "직접 검색":
     preset = st.session_state.preset_select
     if preset in domain_presets:
-        st.session_state.map_center = list(domain_presets[preset])
-        st.session_state.map_zoom = 13
+        cfg_p = domain_presets[preset]
+        w, s, e, n = cfg_p["coord"]
+        st.session_state.map_center = [(s + n) / 2, (w + e) / 2]
+        st.session_state.map_zoom = cfg_p.get("zoom", 12)
         st.session_state.region_name = preset
+        if cfg_p.get("desc"):
+            st.caption(f"📍 {cfg_p['desc']}")
 
 # ── 지도 (현재 화면 범위 = 분석 구역) ──────────────────────────────────────
 st.caption("🗺️ 지도를 이동·줌인하여 분석할 구역을 화면에 맞춰주세요. 화면에 보이는 사각형 범위가 분석 구역입니다.")
