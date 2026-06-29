@@ -99,20 +99,44 @@ def run_analysis(request: AnalysisRequest) -> AnalysisResult:
         geo_region, s_date, e_date, cloud, cfg
     )
 
-    # 토지피복 마스킹 — 타일 시각화에도 동일하게 적용
-    # 마스킹하지 않으면 bbox 전체가 직사각형으로 보임
+    # 토지피복 이중 마스킹 — ESA WorldCover OR Dynamic World
     lc_classes = cfg.get("landcover_mask")
-    if lc_classes:
-        worldcover = (
-            ee.ImageCollection("ESA/WorldCover/v200")
-            .filterBounds(geo_region)
-            .first()
-            .select("Map")
-        )
-        lc_mask = worldcover.eq(lc_classes[0])
-        for cls in lc_classes[1:]:
-            lc_mask = lc_mask.Or(worldcover.eq(cls))
-        calculated_index = calculated_index.updateMask(lc_mask)
+    dw_classes = cfg.get("dw_mask")
+
+    if lc_classes or dw_classes:
+        esa_mask = None
+        if lc_classes:
+            worldcover = (
+                ee.ImageCollection("ESA/WorldCover/v200")
+                .filterBounds(geo_region)
+                .first()
+                .select("Map")
+            )
+            esa_mask = worldcover.eq(lc_classes[0])
+            for cls in lc_classes[1:]:
+                esa_mask = esa_mask.Or(worldcover.eq(cls))
+
+        dw_mask = None
+        if dw_classes:
+            dw_image = (
+                ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1")
+                .filterBounds(geo_region)
+                .filterDate(s_date, e_date)
+                .select("label")
+                .mode()
+            )
+            dw_mask = dw_image.eq(dw_classes[0])
+            for cls in dw_classes[1:]:
+                dw_mask = dw_mask.Or(dw_image.eq(cls))
+
+        if esa_mask is not None and dw_mask is not None:
+            combined_mask = esa_mask.Or(dw_mask)
+        elif esa_mask is not None:
+            combined_mask = esa_mask
+        else:
+            combined_mask = dw_mask
+
+        calculated_index = calculated_index.updateMask(combined_mask)
 
     vis_params = {"min": cfg["min"], "max": cfg["max"], "palette": cfg["palette"]}
     tile_url = get_ee_tile_url(calculated_index.clip(geo_region), vis_params)

@@ -65,7 +65,8 @@ mode_config: dict[str, dict] = {
         "native_resolution_m": 10,
         # NASA 표준 — 베이지(식생 없음) → 연초록 → 진초록(울창)
         "palette": ["#ffffcc", "#d9f0a3", "#addd8e", "#78c679", "#41ab5d", "#238443", "#005a32"],
-        "landcover_mask": [30, 40, 10, 20],  # 경작지, 농경지, 수목, 관목 (ESA WorldCover)
+        "landcover_mask": [30, 40, 10, 20],  # ESA WorldCover: 초지, 경작지, 수목, 관목
+        "dw_mask": [4, 2, 1],                # Dynamic World: 농경지, 초지, 수목
         "min": 0.0, "max": 1.0,
         "anomaly_min": -0.3, "anomaly_max": 0.3,
         "threshold": 0.4, "baseline": 0.15, "ceil": 0.85,
@@ -90,7 +91,8 @@ mode_config: dict[str, dict] = {
         "native_resolution_m": 10,
         # Sentinel Hub 표준 — 베이지(건조) → 하늘 → 진파랑(수체)
         "palette": ["#ffffcc", "#c7e9b4", "#7fcdbb", "#41b6c4", "#1d91c0", "#225ea8", "#0c2c84"],
-        "landcover_mask": [80, 40, 30],  # 수체, 농경지, 초지 (침수·수분 관련)
+        "landcover_mask": [80, 40, 30],  # ESA WorldCover: 수체, 경작지, 초지
+        "dw_mask": [0, 4, 2],            # Dynamic World: 수체, 농경지, 초지
         "min": -0.5, "max": 0.8,
         "anomaly_min": -0.4, "anomaly_max": 0.4,
         "threshold": 0.1, "baseline": -0.40, "ceil": 0.75,
@@ -116,7 +118,8 @@ mode_config: dict[str, dict] = {
         "native_resolution_m": 10,
         # 발산형 — 초록(정상 산림) → 노랑(경계) → 빨강(심각 피해)
         "palette": ["#1a9850", "#91cf60", "#d9ef8b", "#ffffbf", "#fee08b", "#fc8d59", "#d73027"],
-        "landcover_mask": [10, 20],  # 수목, 관목 (산림 구역만)
+        "landcover_mask": [10, 20],  # ESA WorldCover: 수목, 관목
+        "dw_mask": [1, 2],           # Dynamic World: 수목, 초지(관목 포함)
         "min": -0.4, "max": 0.8,
         "anomaly_min": -0.5, "anomaly_max": 0.5,
         "threshold": 0.15, "baseline": -0.30, "ceil": 0.80,
@@ -143,6 +146,7 @@ mode_config: dict[str, dict] = {
         # 흰색(청정) → 연보라 → 진보라(오염 심각) · 대기질 국제 표준
         "palette": ["#f7f7f7", "#d9d9d9", "#bababa", "#c994c7", "#df65b0", "#980043", "#67001f"],
         "landcover_mask": None,  # NO2는 광역 대기 데이터, 마스킹 불필요
+        "dw_mask": None,
         "min": 0.0, "max": 0.0002,  # mol/m², GEE 공식 시각화 범위
         "threshold": 0.00007,       # [추정치] 공식 규제 기준 아님, 검증 필요
         "higher_is_worse": True,
@@ -167,7 +171,8 @@ mode_config: dict[str, dict] = {
         "native_resolution_m": 30,
         # 기상 국제 표준 — 파랑(저온·녹지) → 노랑 → 빨강(고온·도심)
         "palette": ["#4575b4", "#91bfdb", "#e0f3f8", "#ffffbf", "#fee090", "#fc8d59", "#d73027"],
-        "landcover_mask": [50, 40, 30],  # 도시, 경작지, 초지 (열섬 관련)
+        "landcover_mask": [50, 40, 30],  # ESA WorldCover: 도시, 경작지, 초지
+        "dw_mask": [6, 4, 2],            # Dynamic World: 건물, 농경지, 초지
         "min": 20.0, "max": 45.0,
         "threshold": 35.0,
         "higher_is_worse": True,
@@ -199,7 +204,8 @@ mode_config: dict[str, dict] = {
         "native_resolution_m": 20,
         # NASA 표준 확장 — 베이지(엽록소 없음) → 연초록 → 진초록(엽록소 풍부)
         "palette": ["#ffffcc", "#d9f0a3", "#addd8e", "#78c679", "#41ab5d", "#238443", "#005a32"],
-        "landcover_mask": [30, 40],  # 초지·경작지 (농경지 전용)
+        "landcover_mask": [30, 40],  # ESA WorldCover: 초지, 경작지
+        "dw_mask": [4, 2],           # Dynamic World: 농경지, 초지
         "min": -0.1, "max": 0.7,
         "anomaly_min": -0.2, "anomaly_max": 0.2,
         "threshold": 0.35,
@@ -238,7 +244,8 @@ mode_config: dict[str, dict] = {
         "native_resolution_m": 20,
         # 노랑(녹지) → 주황 → 진빨강(불투수면 밀집) · 도시 확장 표준
         "palette": ["#ffffb2", "#fed976", "#feb24c", "#fd8d3c", "#fc4e2a", "#e31a1c", "#b10026"],
-        "landcover_mask": [50],  # 도시/건물 구역만 (ESA WorldCover 50=도시)
+        "landcover_mask": [50],  # ESA WorldCover: 도시/건물
+        "dw_mask": [6],          # Dynamic World: 건물
         "min": -0.5, "max": 0.5,
         "anomaly_min": -0.3, "anomaly_max": 0.3,
         "threshold": 0.0,
@@ -279,7 +286,8 @@ mode_config: dict[str, dict] = {
         "native_resolution_m": 10,
         # 진청보라(수분 높음·침수) → 베이지 → 노랑(건조) · 레이더 수분 표준
         "palette": ["#0d0887", "#5302a3", "#8b0aa5", "#cb4679", "#f48849", "#fdc527", "#f0f921"],
-        "landcover_mask": [40, 30, 80],  # 경작지, 초지, 수체 (침수 관련)
+        "landcover_mask": [40, 30, 80],  # ESA WorldCover: 경작지, 초지, 수체
+        "dw_mask": [4, 2, 0],            # Dynamic World: 농경지, 초지, 수체
         "min": -25.0, "max": -5.0,
         "anomaly_min": -5.0, "anomaly_max": 5.0,
         "threshold": -15.0,
@@ -318,7 +326,8 @@ mode_config: dict[str, dict] = {
         "native_resolution_m": 10,
         # 흰색(식생 없음) → 연초록 → 진초록(식생 풍부) · 식생 구조 표준
         "palette": ["#f7fcf5", "#e5f5e0", "#c7e9c0", "#a1d99b", "#74c476", "#31a354", "#006d2c"],
-        "landcover_mask": [10, 20, 30, 40],  # 수목, 관목, 초지, 경작지
+        "landcover_mask": [10, 20, 30, 40],  # ESA WorldCover: 수목, 관목, 초지, 경작지
+        "dw_mask": [1, 2, 4],                # Dynamic World: 수목, 초지, 농경지
         "min": -30.0, "max": -5.0,
         "anomaly_min": -5.0, "anomaly_max": 5.0,
         "threshold": -20.0,
