@@ -140,6 +140,7 @@ def _data_api_request(
         "page":     "1",
         "geometry": "true",
         "crs":      "EPSG:4326",
+        "domain":   "http://localhost:8501",
     }
 
     if bbox:
