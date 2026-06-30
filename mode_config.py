@@ -538,7 +538,7 @@ preset_config: dict[str, dict] = {
     "♨️ 서울 중구 (열섬 심각)": {
         "type": "polygon",
         "layer": "lt_c_adsigg_info",
-        "filter": "sigg_nm='중구' AND sido_cd='11'",
+        "filter": "full_nm:like:서울특별시 중구",
         "coord": (126.96, 37.55, 127.00, 37.57),
         "zoom": 14,
         "domain": "🏙️ 도시·환경",
@@ -583,7 +583,7 @@ preset_config: dict[str, dict] = {
     "♨️ 대구 중구 (전국 최고기온)": {
         "type": "polygon",
         "layer": "lt_c_adsigg_info",
-        "filter": "sigg_nm='중구' AND sido_cd='27'",
+        "filter": "full_nm:like:대구광역시 중구",
         "coord": (128.58, 35.86, 128.62, 35.88),
         "zoom": 14,
         "domain": "🏙️ 도시·환경",

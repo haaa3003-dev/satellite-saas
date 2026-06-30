@@ -145,7 +145,7 @@ def _data_api_request(
 
     if bbox:
         west, south, east, north = bbox
-        params["bbox"] = f"{west},{south},{east},{north},EPSG:4326"
+        params["bbox"] = f"{west},{south},{east},{north}"  # EPSG:4326 제거
 
     if attr_filter:
         params["attrFilter"] = attr_filter
@@ -259,10 +259,15 @@ def _cql_to_attr_filter(cql: str) -> str | None:
     CQL 필터를 Vworld DATA API attrFilter 형식으로 변환.
     "sigg_nm='중구'" → "sigg_nm:=:중구"
     "river_nm LIKE '%소양%'" → "river_nm:like:소양"
+    "full_nm:like:서울특별시 중구" → 그대로 반환 (이미 attrFilter 형식)
     """
     import re
     if not cql:
         return None
+
+    # 이미 attrFilter 형식인 경우 그대로 반환
+    if ':like:' in cql or ':=:' in cql:
+        return cql
 
     # = 연산자
     m = re.match(r"(\w+)\s*=\s*'([^']+)'", cql)
