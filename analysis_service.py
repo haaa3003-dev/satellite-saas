@@ -99,48 +99,74 @@ def run_analysis(request: AnalysisRequest) -> AnalysisResult:
         geo_region, s_date, e_date, cloud, cfg
     )
 
-    # 토지피복 이중 마스킹 — ESA WorldCover OR Dynamic World
-    # 순서 중요: clip(bbox) 먼저 → 그 다음 마스킹
-    # clip 없이 마스킹만 하면 전 세계 렌더링으로 지도가 축소됨
-    clipped_index = calculated_index.clip(geo_region)
+    # ── 토지피복 마스킹 (Vworld 우선 → ESA+DW 격자 fallback) ────────────────
+    vworld_key = ""
+    try:
+        import streamlit as _st  # noqa: PLC0415
+        vworld_key = _st.secrets.get("vworld_api_key", "")
+    except Exception:
+        pass
 
-    lc_classes = cfg.get("landcover_mask")
-    dw_classes = cfg.get("dw_mask")
-
-    if lc_classes or dw_classes:
-        esa_mask = None
-        if lc_classes:
-            worldcover = (
-                ee.ImageCollection("ESA/WorldCover/v200")
-                .filterBounds(geo_region)
-                .first()
-                .select("Map")
-            )
-            esa_mask = worldcover.eq(lc_classes[0])
-            for cls in lc_classes[1:]:
-                esa_mask = esa_mask.Or(worldcover.eq(cls))
-
-        dw_mask = None
-        if dw_classes:
-            dw_image = (
-                ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1")
-                .filterBounds(geo_region)
-                .filterDate(s_date, e_date)
-                .select("label")
-                .mode()
-            )
-            dw_mask = dw_image.eq(dw_classes[0])
-            for cls in dw_classes[1:]:
-                dw_mask = dw_mask.Or(dw_image.eq(cls))
-
-        if esa_mask is not None and dw_mask is not None:
-            combined_mask = esa_mask.Or(dw_mask)
-        elif esa_mask is not None:
-            combined_mask = esa_mask
+    vworld_mask = None
+    if vworld_key:
+        from vworld import get_vworld_mask, get_vworld_boundary  # noqa: PLC0415
+        # 디버깅: Vworld API 응답 확인
+        geojson = get_vworld_boundary(bbox, cfg["index_name"], vworld_key)
+        if geojson:
+            feat_count = len(geojson.get("features", []))
+            logger.info("Vworld 응답 OK | index=%s features=%d", cfg["index_name"], feat_count)
+            try:
+                import ee as _ee  # noqa: PLC0415
+                fc = _ee.FeatureCollection(geojson)
+                vworld_mask = _ee.Image.constant(1).clip(fc).unmask(0)
+            except Exception as e:
+                logger.warning("Vworld GEE 변환 실패 | error=%s", e)
         else:
-            combined_mask = dw_mask
+            logger.warning("Vworld 응답 없음 | index=%s bbox=%s", cfg["index_name"], bbox)
 
-        clipped_index = clipped_index.updateMask(combined_mask)
+    if vworld_mask is not None:
+        clipped_index = calculated_index.clip(geo_region).updateMask(vworld_mask)
+        logger.info("Vworld 필지 경계 마스킹 적용 (타일) | mode=%s", request.mode_key)
+    else:
+        # fallback: ESA WorldCover OR Dynamic World 격자 마스킹
+        clipped_index = calculated_index.clip(geo_region)
+        lc_classes = cfg.get("landcover_mask")
+        dw_classes = cfg.get("dw_mask")
+
+        if lc_classes or dw_classes:
+            esa_mask = None
+            if lc_classes:
+                worldcover = (
+                    ee.ImageCollection("ESA/WorldCover/v200")
+                    .filterBounds(geo_region)
+                    .first()
+                    .select("Map")
+                )
+                esa_mask = worldcover.eq(lc_classes[0])
+                for cls in lc_classes[1:]:
+                    esa_mask = esa_mask.Or(worldcover.eq(cls))
+
+            dw_mask = None
+            if dw_classes:
+                dw_image = (
+                    ee.ImageCollection("GOOGLE/DYNAMICWORLD/V1")
+                    .filterBounds(geo_region)
+                    .filterDate(s_date, e_date)
+                    .select("label")
+                    .mode()
+                )
+                dw_mask = dw_image.eq(dw_classes[0])
+                for cls in dw_classes[1:]:
+                    dw_mask = dw_mask.Or(dw_image.eq(cls))
+
+            if esa_mask is not None and dw_mask is not None:
+                combined_mask = esa_mask.Or(dw_mask)
+            elif esa_mask is not None:
+                combined_mask = esa_mask
+            else:
+                combined_mask = dw_mask
+
+            clipped_index = clipped_index.updateMask(combined_mask)
 
     vis_params = {"min": cfg["min"], "max": cfg["max"], "palette": cfg["palette"]}
     tile_url = get_ee_tile_url(clipped_index, vis_params)
