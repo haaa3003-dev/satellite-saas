@@ -145,7 +145,7 @@ def _data_api_request(
 
     if bbox:
         west, south, east, north = bbox
-        params["bbox"] = f"{west},{south},{east},{north}"  # EPSG:4326 제거
+        params["geomFilter"] = f"BOX({west:.4f} {south:.4f},{east:.4f} {north:.4f})"
 
     if attr_filter:
         params["attrFilter"] = attr_filter
@@ -187,7 +187,7 @@ def _wfs_api_request(
     bbox: tuple[float, float, float, float] | None = None,
     cql_filter: str | None = None,
     max_features: int = 500,
-    timeout: int = 10,
+    timeout: int = 20,
 ) -> dict[str, Any] | None:
     """Vworld WFS API — 연속지적도 등 필지 기반."""
     params: dict[str, str] = {
@@ -203,7 +203,7 @@ def _wfs_api_request(
 
     if bbox:
         west, south, east, north = bbox
-        params["bbox"] = f"{west},{south},{east},{north},EPSG:4326"
+        params["bbox"] = f"{west:.4f},{south:.4f},{east:.4f},{north:.4f},EPSG:4326"
 
     if cql_filter:
         params["CQL_FILTER"] = cql_filter

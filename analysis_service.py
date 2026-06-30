@@ -41,6 +41,115 @@ from mode_config import mode_config
 logger = logging.getLogger(__name__)
 
 
+# ── Vworld 시군구 역지오코딩 캐시 ─────────────────────────────────────────────
+_sigungu_cache: dict[tuple[float, float], str] = {}
+
+
+def _reverse_geocode_sigungu(cx: float, cy: float) -> str:
+    """
+    bbox 중심 좌표 → Nominatim 역지오코딩 → 시군구명 추출.
+    같은 좌표 반복 호출을 막기 위해 모듈 레벨 캐시 사용.
+    """
+    cache_key = (round(cx, 3), round(cy, 3))
+    if cache_key in _sigungu_cache:
+        return _sigungu_cache[cache_key]
+
+    import requests as _req
+    try:
+        r = _req.get(
+            "https://nominatim.openstreetmap.org/reverse",
+            params={"lat": cy, "lon": cx, "format": "json", "accept-language": "ko"},
+            headers={"User-Agent": "ksat-open-explorer/1.0"},
+            timeout=5,
+        )
+        addr = r.json().get("address", {})
+        sigungu = (
+            addr.get("city_district") or
+            addr.get("borough") or
+            addr.get("county") or
+            addr.get("city") or ""
+        )
+        _sigungu_cache[cache_key] = sigungu
+        return sigungu
+    except Exception as e:
+        logger.warning("역지오코딩 실패 | error=%s", e)
+        return ""
+
+
+def _get_vworld_feature_collection(
+    bbox: tuple[float, float, float, float],
+    index_name: str,
+    api_key: str,
+):
+    """
+    분석 모드에 맞는 Vworld 폴리곤을 가져와 ee.FeatureCollection으로 반환한다.
+
+    전략 분기:
+    - 행정구역 모드(LST, NDBI): bbox 중심 → 시군구명 → attrFilter 단일 검색
+    - 농경지 모드(NDVI, NDRE): bbox 중심 → 시군구명 + 지목 → CQL_FILTER 검색
+      (연속지적도는 전국 단위 단일검색이 안 되므로 행정구역명으로 필지를 좁힌다)
+    - 수계·산림 모드(NDWI, NBR, SAR_VV, SAR_VH): bbox + CQL_FILTER 직접 검색
+    - NO2: 마스킹 없음
+
+    반환: ee.FeatureCollection 또는 None (실패 시 호출부에서 격자 마스킹 fallback)
+    """
+    from vworld import VWORLD_LAYER_MAP, DATA_API_LAYERS, _data_api_request, get_vworld_boundary
+
+    layer_cfg = VWORLD_LAYER_MAP.get(index_name)
+    if layer_cfg is None:
+        return None
+
+    layer, base_cql_filter = layer_cfg
+    west, south, east, north = bbox
+    cx = round((west + east) / 2, 4)
+    cy = round((south + north) / 2, 4)
+
+    # ── 전략 1: 행정구역 단일 레이어 (LST, NDBI) ────────────────────────────
+    if layer in DATA_API_LAYERS and base_cql_filter is None:
+        sigungu = _reverse_geocode_sigungu(cx, cy)
+        if not sigungu:
+            logger.warning("시군구명 조회 실패 | bbox=%s", bbox)
+            return None
+
+        attr_filter = f"sig_kor_nm:=:{sigungu}"
+        geojson = _data_api_request(api_key, layer, attr_filter=attr_filter, max_features=1)
+        if geojson and geojson.get("features"):
+            logger.info("Vworld 행정구역 OK | %s features=%d", sigungu, len(geojson["features"]))
+            return ee.FeatureCollection(geojson)
+        logger.warning("Vworld 행정구역 없음 | sigungu=%s", sigungu)
+        return None
+
+    # ── 전략 2: 농경지 필지 (NDVI, NDRE) — 행정구역명 + 지목으로 필지 검색 ──
+    if layer == "lt_c_landinfobasemap" and base_cql_filter is not None:
+        sigungu = _reverse_geocode_sigungu(cx, cy)
+        if not sigungu:
+            logger.warning("시군구명 조회 실패 | bbox=%s", bbox)
+            return None
+
+        # 시군구명 + 지목 필터를 동시에 건 CQL_FILTER
+        combined_filter = f"sigg_nm='{sigungu}' AND {base_cql_filter}"
+        from vworld import _wfs_api_request
+        geojson = _wfs_api_request(
+            api_key, layer,
+            cql_filter=combined_filter,
+            max_features=2000,
+        )
+        if geojson and geojson.get("features"):
+            feat_count = len(geojson["features"])
+            logger.info("Vworld 농경지 필지 OK | %s features=%d", sigungu, feat_count)
+            return ee.FeatureCollection(geojson)
+        logger.warning("Vworld 농경지 필지 없음 | sigungu=%s", sigungu)
+        return None
+
+    # ── 전략 3: 수계·산림 (NDWI, NBR, SAR_VV, SAR_VH) — bbox + CQL 직접 검색 ─
+    geojson = get_vworld_boundary(bbox, index_name, api_key)
+    if geojson and geojson.get("features"):
+        logger.info("Vworld OK | index=%s features=%d", index_name, len(geojson["features"]))
+        return ee.FeatureCollection(geojson)
+
+    return None
+
+
 def is_good_value(val: float, cfg: dict) -> bool:
     """
     higher_is_worse 플래그를 보고 값이 '양호' 방향인지 판단한다.
@@ -99,7 +208,7 @@ def run_analysis(request: AnalysisRequest) -> AnalysisResult:
         geo_region, s_date, e_date, cloud, cfg
     )
 
-    # ── 토지피복 마스킹 (Vworld 우선 → ESA+DW 격자 fallback) ────────────────
+    # ── 토지피복 마스킹 (Vworld 폴리곤 우선 → ESA+DW 격자 fallback) ──────────
     vworld_key = ""
     try:
         import streamlit as _st  # noqa: PLC0415
@@ -109,21 +218,10 @@ def run_analysis(request: AnalysisRequest) -> AnalysisResult:
 
     vworld_fc = None
     if vworld_key:
-        from vworld import get_vworld_boundary  # noqa: PLC0415
-        geojson = get_vworld_boundary(bbox, cfg["index_name"], vworld_key)
-        if geojson and geojson.get("features"):
-            feat_count = len(geojson["features"])
-            logger.info("Vworld 응답 OK | index=%s features=%d", cfg["index_name"], feat_count)
-            try:
-                vworld_fc = ee.FeatureCollection(geojson)
-            except Exception as e:
-                logger.warning("Vworld GEE 변환 실패 | error=%s", e)
-                vworld_fc = None
-        else:
-            logger.warning("Vworld 응답 없음 | index=%s bbox=%s", cfg["index_name"], bbox)
+        vworld_fc = _get_vworld_feature_collection(bbox, cfg["index_name"], vworld_key)
 
     if vworld_fc is not None:
-        # Vworld 폴리곤 모양 그대로 clip — 행정구역/수계도/임야도 경계대로 표시됨
+        # Vworld 폴리곤 모양 그대로 clip — 행정구역/수계도/임야도/농경지 경계대로 표시됨
         clipped_index = calculated_index.clip(vworld_fc)
         logger.info("Vworld 폴리곤 clip 적용 | mode=%s", request.mode_key)
     else:
