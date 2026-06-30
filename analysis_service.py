@@ -107,28 +107,27 @@ def run_analysis(request: AnalysisRequest) -> AnalysisResult:
     except Exception:
         pass
 
-    vworld_mask = None
+    vworld_fc = None
     if vworld_key:
-        from vworld import get_vworld_mask, get_vworld_boundary  # noqa: PLC0415
-        # 디버깅: Vworld API 응답 확인
+        from vworld import get_vworld_boundary  # noqa: PLC0415
         geojson = get_vworld_boundary(bbox, cfg["index_name"], vworld_key)
-        if geojson:
-            feat_count = len(geojson.get("features", []))
+        if geojson and geojson.get("features"):
+            feat_count = len(geojson["features"])
             logger.info("Vworld 응답 OK | index=%s features=%d", cfg["index_name"], feat_count)
             try:
-                import ee as _ee  # noqa: PLC0415
-                fc = _ee.FeatureCollection(geojson)
-                vworld_mask = _ee.Image.constant(1).clip(fc).unmask(0)
+                vworld_fc = ee.FeatureCollection(geojson)
             except Exception as e:
                 logger.warning("Vworld GEE 변환 실패 | error=%s", e)
+                vworld_fc = None
         else:
             logger.warning("Vworld 응답 없음 | index=%s bbox=%s", cfg["index_name"], bbox)
 
-    if vworld_mask is not None:
-        clipped_index = calculated_index.clip(geo_region).updateMask(vworld_mask)
-        logger.info("Vworld 필지 경계 마스킹 적용 (타일) | mode=%s", request.mode_key)
+    if vworld_fc is not None:
+        # Vworld 폴리곤 모양 그대로 clip — 행정구역/수계도/임야도 경계대로 표시됨
+        clipped_index = calculated_index.clip(vworld_fc)
+        logger.info("Vworld 폴리곤 clip 적용 | mode=%s", request.mode_key)
     else:
-        # fallback: ESA WorldCover OR Dynamic World 격자 마스킹
+        # fallback: bbox clip + ESA WorldCover OR Dynamic World 격자 마스킹
         clipped_index = calculated_index.clip(geo_region)
         lc_classes = cfg.get("landcover_mask")
         dw_classes = cfg.get("dw_mask")

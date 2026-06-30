@@ -159,10 +159,10 @@ def _build_index_image(
     image = collection.median()
     calculated_index = _compute_index_from_image(image, mode_cfg)
 
-    # ── 토지피복 이중 마스킹 (clip 후 적용) ──────────────────────────────────
-    # 순서: clip(region) 먼저 → 마스킹 나중
-    # clip이 없으면 전 세계 렌더링으로 지도 축소됨
-    # clip이 마스킹 뒤에 오면 직사각형이 씌워짐
+    # ── 토지피복 마스킹 ────────────────────────────────────────────────────────
+    # 우선순위: Vworld FeatureCollection clip → ESA+DW 격자 마스킹
+    # Vworld는 analysis_service에서 타일 URL 생성 시 처리.
+    # 여기서는 통계 계산용 ESA+DW 격자 마스킹만 적용.
     lc_classes = mode_cfg.get("landcover_mask")
     dw_classes = mode_cfg.get("dw_mask")
 
@@ -202,6 +202,8 @@ def _build_index_image(
             combined_mask = dw_mask
 
         calculated_index = clipped.updateMask(combined_mask)
+    else:
+        calculated_index = calculated_index.clip(region)
 
     return collection, image, calculated_index
 
