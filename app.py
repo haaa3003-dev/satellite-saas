@@ -153,6 +153,8 @@ if "map_zoom" not in st.session_state:
     st.session_state.map_zoom = 12
 if "region_name" not in st.session_state:
     st.session_state.region_name = _first_preset_key
+if "search_geojson" not in st.session_state:
+    st.session_state.search_geojson = None
 
 col_s1, col_s2 = st.columns([2, 1])
 with col_s1:
@@ -173,39 +175,108 @@ with col_s2:
         on_change=_clear_search,
     )
 
-# 지역 이동 처리
+# ── 지역 이동 처리 ────────────────────────────────────────────────────────────
+vworld_key = st.secrets.get("vworld_api_key", "")
+
 if st.session_state.search_input:
-    try:
-        geo_results = geocode_place(st.session_state.search_input)
-        if geo_results:
-            found_lat, found_lon, found_name = geo_results[0]
-            st.session_state.map_center = [found_lat, found_lon]
-            st.session_state.map_zoom = 13
-            st.session_state.region_name = found_name[:30]
-            st.success(f"✅ '{found_name[:30]}'로 지도를 이동했습니다.")
-        else:
-            st.warning("⚠️ 검색 결과가 없습니다.")
-    except NetworkError as exc:
-        st.warning(f"⚠️ 지명 검색 중 오류: {exc}")
+    query = st.session_state.search_input.strip()
+    vworld_result = None
+
+    # 1. Vworld 폴리곤 검색 (API 키 있을 때)
+    if vworld_key:
+        try:
+            from vworld import search_polygon
+            vworld_result = search_polygon(query, vworld_key, max_features=200)
+        except Exception as e:
+            logger.warning("Vworld 검색 실패 | error=%s", e)
+
+    if vworld_result and vworld_result.get("features"):
+        # 폴리곤 bbox 자동 계산
+        coords_list = []
+        for feat in vworld_result["features"]:
+            geom = feat.get("geometry", {})
+            if geom.get("type") == "Polygon":
+                for ring in geom.get("coordinates", []):
+                    coords_list.extend(ring)
+            elif geom.get("type") == "MultiPolygon":
+                for poly in geom.get("coordinates", []):
+                    for ring in poly:
+                        coords_list.extend(ring)
+        if coords_list:
+            lons = [c[0] for c in coords_list]
+            lats = [c[1] for c in coords_list]
+            w, s, e, n = min(lons), min(lats), max(lons), max(lats)
+            st.session_state.map_center = [(s + n) / 2, (w + e) / 2]
+            st.session_state.map_zoom = 12
+            st.session_state.region_name = query
+            st.session_state.search_geojson = vworld_result
+            feat_count = len(vworld_result["features"])
+            st.success(f"✅ '{query}' — 공공데이터 폴리곤 {feat_count}개")
+    else:
+        # 2. Vworld 실패 → Nominatim fallback
+        st.session_state.search_geojson = None
+        try:
+            geo_results = geocode_place(query)
+            if geo_results:
+                found_lat, found_lon, found_name = geo_results[0]
+                st.session_state.map_center = [found_lat, found_lon]
+                st.session_state.map_zoom = 13
+                st.session_state.region_name = found_name[:30]
+                st.success(f"✅ '{found_name[:30]}'로 지도를 이동했습니다.")
+            else:
+                st.warning("⚠️ 검색 결과가 없습니다.")
+        except NetworkError as exc:
+            st.warning(f"⚠️ 지명 검색 중 오류: {exc}")
 
 elif st.session_state.preset_select != "직접 검색":
     preset = st.session_state.preset_select
+    st.session_state.search_geojson = None
     if preset in domain_presets:
         cfg_p = domain_presets[preset]
         w, s, e, n = cfg_p["coord"]
+        # 프리셋 선택 시 Vworld 폴리곤 자동 로드
+        if vworld_key:
+            try:
+                from vworld import get_vworld_boundary
+                idx_name = mode_config[analysis_mode]["index_name"]
+                vworld_result = get_vworld_boundary(
+                    (w, s, e, n), idx_name, vworld_key
+                )
+                if vworld_result and vworld_result.get("features"):
+                    st.session_state.search_geojson = vworld_result
+            except Exception as e:
+                logger.warning("프리셋 Vworld 로드 실패 | error=%s", e)
         st.session_state.map_center = [(s + n) / 2, (w + e) / 2]
         st.session_state.map_zoom = cfg_p.get("zoom", 12)
         st.session_state.region_name = preset
         if cfg_p.get("desc"):
             st.caption(f"📍 {cfg_p['desc']}")
 
-# ── 지도 (현재 화면 범위 = 분석 구역) ──────────────────────────────────────
-st.caption("🗺️ 지도를 이동·줌인하여 분석할 구역을 화면에 맞춰주세요. 화면에 보이는 사각형 범위가 분석 구역입니다.")
+# ── 지도 (폴리곤 오버레이 + 현재 화면 범위 = 분석 구역) ────────────────────
+st.caption(
+    "🗺️ 지도를 이동·줌인하여 분석할 구역을 화면에 맞춰주세요. "
+    "공공데이터 경계가 있으면 파란선으로 표시됩니다."
+)
 
 selector_map = folium.Map(
     location=st.session_state.map_center,
     zoom_start=st.session_state.map_zoom,
 )
+
+# Vworld 폴리곤 경계선 오버레이
+if st.session_state.get("search_geojson"):
+    try:
+        from vworld import geojson_to_folium_layer
+        geojson_to_folium_layer(
+            st.session_state.search_geojson,
+            layer_name="공공데이터 경계",
+            color="#2c7fb8",
+            fill_opacity=0.08,
+            weight=2.0,
+        ).add_to(selector_map)
+    except Exception as e:
+        logger.warning("폴리곤 오버레이 실패 | error=%s", e)
+
 map_data = st_folium(
     selector_map,
     width="100%",
