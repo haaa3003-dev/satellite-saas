@@ -642,11 +642,31 @@ if tab_main:
             "(같은 날짜 중복 촬영분은 평균으로 합침 / 예측·추정 없음, 100% 실측 데이터)"
         )
 
-    # ── E. 교차 진단 ──────────────────────────────────────────────────────────
-    if res.cross_results:
-        st.markdown("---")
-        st.subheader("🔬 교차 진단")
-        for cr in res.cross_results:
+    # ── E. 교차 진단 (지연 로딩) ─────────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("🔬 교차 진단")
+    st.caption(
+        "다른 위성 지수와 함께 보면 더 정확한 진단이 가능합니다. "
+        "추가 위성 데이터 조회가 필요해 별도로 계산합니다."
+    )
+
+    cross_cache_key = f"cross_{res.request.mode_key}_{bbox}_{s_date}_{e_date}_{cloud}"
+
+    if st.button("🔍 교차 진단 계산하기", key="cross_diag_btn", disabled=cur.mean is None):
+        with st.spinner("짝 지표 위성 데이터를 조회하는 중..."):
+            from analysis_service import compute_cross_diagnosis
+            st.session_state[cross_cache_key] = compute_cross_diagnosis(
+                mode_key=res.request.mode_key,
+                bbox=bbox,
+                start_date=s_date,
+                end_date=e_date,
+                cloud=cloud,
+                current_mean=cur.mean,
+            )
+
+    cross_results = st.session_state.get(cross_cache_key)
+    if cross_results:
+        for cr in cross_results:
             with st.container(border=True):
                 st.markdown(f"**{cr.label}** · 짝 지표: {cr.partner_mode_key}")
                 if not cr.available:

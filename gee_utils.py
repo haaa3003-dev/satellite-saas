@@ -329,6 +329,8 @@ def get_time_series(
             reducer=reducer,
             geometry=region,
             scale=scale,
+            maxPixels=1e9,
+            bestEffort=True,
         ).get(index_name)
         return ee.Feature(None, {
             "date": image.date().format("YYYY-MM-dd"),
@@ -418,11 +420,17 @@ def get_change_detection_tile_url(
         # 단일 Reducer.mean() → 키가 "{index_name}" 그대로 반환됨
         reducer = ee.Reducer.mean()
         before_stats = _safe_get_info(
-            before_index.reduceRegion(reducer=reducer, geometry=region, scale=scale),
+            before_index.reduceRegion(
+                reducer=reducer, geometry=region, scale=scale,
+                maxPixels=1e9, bestEffort=True,
+            ),
             context="change_before_mean",
         )
         after_stats = _safe_get_info(
-            after_index.reduceRegion(reducer=reducer, geometry=region, scale=scale),
+            after_index.reduceRegion(
+                reducer=reducer, geometry=region, scale=scale,
+                maxPixels=1e9, bestEffort=True,
+            ),
             context="change_after_mean",
         )
 
@@ -487,6 +495,8 @@ def get_seasonal_trend(
                     reducer=ee.Reducer.mean(),
                     geometry=region,
                     scale=scale,
+                    maxPixels=1e9,
+                    bestEffort=True,
                 ),
                 context=f"seasonal_mean_{month}",
             )
@@ -622,6 +632,8 @@ def get_multi_point_stats(
                     reducer=combined_reducer,
                     geometry=region,
                     scale=scale,
+                    maxPixels=1e9,
+                    bestEffort=True,
                 ),
                 context=f"multi_stats_{name}",
             )

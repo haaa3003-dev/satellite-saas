@@ -34,28 +34,32 @@ VWORLD_WFS_URL = "https://api.vworld.kr/req/wfs"
 VWORLD_DATA_URL = "https://api.vworld.kr/req/data"  # 행정구역·수계도·임야도용
 
 # ── 레이어별 API 엔드포인트 구분 ─────────────────────────────────────────────
-# WFS API: 연속지적도 등 필지 기반
-# DATA API: 행정구역·수계도·임야도 등 공간 객체 기반
+# WFS API: GetCapabilities로 검증된 실제 레이어명 (_info 접미사 없음)
+# DATA API: 연속지적도(LP_PA_CBND_BUBUN), 시군구(LT_C_ADSIGG_INFO) 등 별도 네이밍
 DATA_API_LAYERS = {
-    "lt_c_adsigg_info",   # 시군구 행정구역
-    "lt_c_adsido_info",   # 시도 행정구역
-    "lt_c_waterarea",     # 수계도
-    "lt_c_forestmap",     # 임야도
-    "lt_c_ademd_info",    # 읍면동
+    "LT_C_ADSIGG_INFO",   # 시군구 행정구역 (DATA API 전용 명칭, attrFilter 단일검색 가능)
+    "LT_C_ADSIDO_INFO",   # 시도 행정구역
+    "LP_PA_CBND_BUBUN",   # 연속지적도(지번) — DATA API 전용
+}
+
+# WFS로 bbox 기반 직접 조회하는 레이어 (GetCapabilities로 검증됨)
+WFS_LAYERS = {
+    "lt_c_wkmstrm",         # 하천망(수계)
+    "lt_c_kfdrssigugrade",  # 산불위험등급(시군구 단위)
 }
 
 # ── 도메인별 레이어 매핑 ──────────────────────────────────────────────────────
-# index_name → (Vworld 레이어, CQL 필터 or None)
+# index_name → (Vworld 레이어, CQL/attr 필터 or None)
 VWORLD_LAYER_MAP: dict[str, tuple[str, str | None] | None] = {
-    "NDVI":   ("lt_c_landinfobasemap", "jimok_cd IN ('전','답','과수원','목장용지')"),
-    "NDRE":   ("lt_c_landinfobasemap", "jimok_cd IN ('전','답','과수원','목장용지')"),
-    "NDWI":   ("lt_c_waterarea",       None),
-    "NBR":    ("lt_c_forestmap",       None),
-    "LST":    ("lt_c_adsigg_info",     None),   # 시군구 행정구역
-    "NDBI":   ("lt_c_adsigg_info",     None),   # 시군구 행정구역
-    "NO2":    None,                              # 광역 대기 — 마스킹 불필요
-    "SAR_VV": ("lt_c_waterarea",       None),
-    "SAR_VH": ("lt_c_forestmap",       None),
+    "NDVI":   ("LP_PA_CBND_BUBUN",      None),  # attrFilter는 analysis_service에서 동적 생성
+    "NDRE":   ("LP_PA_CBND_BUBUN",      None),
+    "NDWI":   ("lt_c_wkmstrm",          None),  # 하천망 — bbox 기반 WFS 조회
+    "NBR":    ("lt_c_kfdrssigugrade",   None),  # 산불위험등급 시군구 — bbox 기반 WFS 조회
+    "LST":    ("LT_C_ADSIGG_INFO",      None),  # 시군구 행정구역 — 검증됨
+    "NDBI":   ("LT_C_ADSIGG_INFO",      None),  # 시군구 행정구역 — 검증됨
+    "NO2":    None,                               # 광역 대기 — 마스킹 불필요
+    "SAR_VV": ("lt_c_wkmstrm",          None),  # 하천망 — 침수·토양수분 관련
+    "SAR_VH": ("lt_c_kfdrssigugrade",   None),  # 산림 관련
 }
 
 # ── 작물 키워드 → 지목 코드 매핑 ─────────────────────────────────────────────
@@ -71,26 +75,26 @@ CROP_KEYWORD_MAP: dict[str, str] = {
 
 # ── 지형 키워드 → 레이어 매핑 ────────────────────────────────────────────────
 TERRAIN_KEYWORD_MAP: dict[str, str] = {
-    "저수지": "lt_c_waterarea",
-    "댐":     "lt_c_waterarea",
-    "호수":   "lt_c_waterarea",
-    "하천":   "lt_c_waterarea",
-    "호":     "lt_c_waterarea",   # 충주호, 소양호 등
-    "산림":   "lt_c_forestmap",
-    "임야":   "lt_c_forestmap",
-    "숲":     "lt_c_forestmap",
-    "산":     "lt_c_forestmap",
-    "강":     "lt_c_waterarea",
+    "저수지": "lt_c_wkmstrm",
+    "댐":     "lt_c_wkmstrm",
+    "호수":   "lt_c_wkmstrm",
+    "하천":   "lt_c_wkmstrm",
+    "호":     "lt_c_wkmstrm",   # 충주호, 소양호 등
+    "산림":   "lt_c_kfdrssigugrade",
+    "임야":   "lt_c_kfdrssigugrade",
+    "숲":     "lt_c_kfdrssigugrade",
+    "산":     "lt_c_kfdrssigugrade",
+    "강":     "lt_c_wkmstrm",
 }
 
 # 도시 분석 키워드 → 행정구역 레이어
 URBAN_KEYWORD_MAP: dict[str, str] = {
-    "열섬": "lt_c_adsigg_info",
-    "대기오염": "lt_c_adsigg_info",
-    "미세먼지": "lt_c_adsigg_info",
-    "폭염": "lt_c_adsigg_info",
-    "불투수면": "lt_c_adsigg_info",
-    "도시": "lt_c_adsigg_info",
+    "열섬": "LT_C_ADSIGG_INFO",
+    "대기오염": "LT_C_ADSIGG_INFO",
+    "미세먼지": "LT_C_ADSIGG_INFO",
+    "폭염": "LT_C_ADSIGG_INFO",
+    "불투수면": "LT_C_ADSIGG_INFO",
+    "도시": "LT_C_ADSIGG_INFO",
 }
 
 
@@ -189,21 +193,25 @@ def _wfs_api_request(
     max_features: int = 500,
     timeout: int = 20,
 ) -> dict[str, Any] | None:
-    """Vworld WFS API — 연속지적도 등 필지 기반."""
+    """
+    Vworld WFS API — 연속지적도·하천망·산불위험등급 등 GeoServer 기반 레이어.
+
+    [주의] version 파라미터를 포함하면 INCORRECT_KEY 오류 발생 — 반드시 생략.
+    typename은 소문자로 보내야 한다(GeoServer 표준).
+    """
     params: dict[str, str] = {
         "key":         api_key,
         "service":     "WFS",
-        "version":     "2.0.0",
         "request":     "GetFeature",
-        "typeName":    layer,
-        "srsName":     "EPSG:4326",
-        "maxFeatures": str(max_features),
+        "typename":    layer,
         "output":      "application/json",
+        "maxFeatures": str(max_features),
+        "domain":      "http://localhost:8501",
     }
 
     if bbox:
         west, south, east, north = bbox
-        params["bbox"] = f"{west:.4f},{south:.4f},{east:.4f},{north:.4f},EPSG:4326"
+        params["bbox"] = f"{west:.4f},{south:.4f},{east:.4f},{north:.4f}"
 
     if cql_filter:
         params["CQL_FILTER"] = cql_filter
@@ -366,11 +374,11 @@ def parse_search_query(query: str) -> dict[str, str | None]:
         # 레이어가 아직 없으면 행정구역 레이어 사용
         if result["layer"] is None:
             if admin_name.endswith(('시', '군')):
-                result["layer"] = "lt_c_adsigg_info"
-                result["cql_filter"] = f"sigg_nm='{admin_name}'"
+                result["layer"] = "LT_C_ADSIGG_INFO"
+                result["cql_filter"] = f"sig_kor_nm:=:{admin_name}"
             elif admin_name.endswith('구'):
-                result["layer"] = "lt_c_adsigg_info"
-                result["cql_filter"] = f"sigg_nm='{admin_name}'"
+                result["layer"] = "LT_C_ADSIGG_INFO"
+                result["cql_filter"] = f"sig_kor_nm:=:{admin_name}"
         else:
             # 작물 레이어에 지역 필터 추가
             sigungu = admin_name
@@ -443,11 +451,11 @@ def get_admin_boundary(
     if not api_key:
         return None
 
-    cql_filter = f"sigg_nm='{sigungu_name}'"
-    return _wfs_request(
+    attr_filter = f"sig_kor_nm:=:{sigungu_name}"
+    return _data_api_request(
         api_key,
-        "lt_c_adsigg_info",
-        cql_filter=cql_filter,
+        "LT_C_ADSIGG_INFO",
+        attr_filter=attr_filter,
         max_features=10,
     )
 
@@ -458,19 +466,17 @@ def get_water_boundary(
     bbox: tuple[float, float, float, float] | None = None,
 ) -> dict[str, Any] | None:
     """
-    수체 이름으로 저수지·강·호수 경계 폴리곤 반환.
+    수체 이름으로 하천망 경계 폴리곤 반환.
 
     예: "소양강", "충주호", "안동댐"
     """
     if not api_key:
         return None
 
-    cql_filter = f"river_nm LIKE '%{water_name}%'"
-    return _wfs_request(
+    return _wfs_api_request(
         api_key,
-        "lt_c_waterarea",
+        "lt_c_wkmstrm",
         bbox=bbox,
-        cql_filter=cql_filter,
         max_features=50,
     )
 
@@ -479,10 +485,10 @@ def get_forest_boundary(
     bbox: tuple[float, float, float, float],
     api_key: str,
 ) -> dict[str, Any] | None:
-    """bbox 내 임야도 경계 반환."""
+    """bbox 내 산불위험등급 경계 반환."""
     if not api_key:
         return None
-    return _wfs_request(api_key, "lt_c_forestmap", bbox=bbox, max_features=300)
+    return _wfs_api_request(api_key, "lt_c_kfdrssigugrade", bbox=bbox, max_features=300)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
