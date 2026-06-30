@@ -467,6 +467,24 @@ if tab_main:
             overlay=True,
             control=True,
         ).add_to(m)
+
+    # 공공데이터 경계선 오버레이 + fit_bounds
+    if st.session_state.get("search_geojson"):
+        try:
+            from vworld import geojson_to_folium_layer
+            geojson_to_folium_layer(
+                st.session_state.search_geojson,
+                layer_name="공공데이터 경계",
+                color="#2c7fb8",
+                fill_opacity=0.0,
+                weight=2.5,
+            ).add_to(m)
+            # 폴리곤 bbox에 맞게 지도 자동 줌
+            w, s, e, n = bbox
+            m.fit_bounds([[s, w], [n, e]])
+        except Exception as e:
+            logger.warning("결과 지도 폴리곤 오버레이 실패 | error=%s", e)
+
     st_folium(m, width="100%", height=500, returned_objects=[], key="main_map")
 
     # ── 컬러바 범례 ──────────────────────────────────────────────────────────
