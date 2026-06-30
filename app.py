@@ -295,16 +295,37 @@ if map_data and map_data.get("bounds"):
         east  = b["_northEast"]["lng"]
         north = b["_northEast"]["lat"]
         current_bbox = (west, south, east, north)
-        # 지도 중심 업데이트 (다음 렌더링 시 위치 유지)
         st.session_state.map_center = [(south + north) / 2, (west + east) / 2]
         st.session_state.map_zoom = map_data.get("zoom", st.session_state.map_zoom)
     except (KeyError, TypeError):
         current_bbox = None
 
+# Vworld 폴리곤이 있으면 폴리곤 bbox를 분석 구역으로 우선 사용
+if st.session_state.get("search_geojson"):
+    try:
+        coords_list = []
+        for feat in st.session_state.search_geojson.get("features", []):
+            geom = feat.get("geometry", {})
+            if geom.get("type") == "Polygon":
+                for ring in geom.get("coordinates", []):
+                    coords_list.extend(ring)
+            elif geom.get("type") == "MultiPolygon":
+                for poly in geom.get("coordinates", []):
+                    for ring in poly:
+                        coords_list.extend(ring)
+        if coords_list:
+            lons = [c[0] for c in coords_list]
+            lats = [c[1] for c in coords_list]
+            poly_bbox = (min(lons), min(lats), max(lons), max(lats))
+            current_bbox = poly_bbox  # 폴리곤 bbox로 덮어씌우기
+    except Exception as e:
+        logger.warning("폴리곤 bbox 계산 실패 | error=%s", e)
+
 if current_bbox:
     w, s, e, n = current_bbox
+    label = "🔷 공공데이터 경계 기준" if st.session_state.get("search_geojson") else "📐 현재 화면 기준"
     st.caption(
-        f"📐 현재 분석 구역: 위도 {s:.4f}°~{n:.4f}°, 경도 {w:.4f}°~{e:.4f}° "
+        f"{label} 분석 구역: 위도 {s:.4f}°~{n:.4f}°, 경도 {w:.4f}°~{e:.4f}° "
         f"(약 {abs(e-w)*111:.1f}km × {abs(n-s)*111:.1f}km)"
     )
 
