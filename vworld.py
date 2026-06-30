@@ -31,6 +31,18 @@ import requests
 logger = logging.getLogger(__name__)
 
 VWORLD_WFS_URL = "https://api.vworld.kr/req/wfs"
+VWORLD_DATA_URL = "https://api.vworld.kr/req/data"  # 행정구역·수계도·임야도용
+
+# ── 레이어별 API 엔드포인트 구분 ─────────────────────────────────────────────
+# WFS API: 연속지적도 등 필지 기반
+# DATA API: 행정구역·수계도·임야도 등 공간 객체 기반
+DATA_API_LAYERS = {
+    "lt_c_adsigg_info",   # 시군구 행정구역
+    "lt_c_adsido_info",   # 시도 행정구역
+    "lt_c_waterarea",     # 수계도
+    "lt_c_forestmap",     # 임야도
+    "lt_c_ademd_info",    # 읍면동
+}
 
 # ── 도메인별 레이어 매핑 ──────────────────────────────────────────────────────
 # index_name → (Vworld 레이어, CQL 필터 or None)
@@ -91,12 +103,92 @@ def _wfs_request(
     layer: str,
     bbox: tuple[float, float, float, float] | None = None,
     cql_filter: str | None = None,
+    attr_filter: str | None = None,
     max_features: int = 500,
     timeout: int = 10,
 ) -> dict[str, Any] | None:
-    """Vworld WFS API 공통 요청 함수."""
-    west, south, east, north = bbox if bbox else (0, 0, 0, 0)
+    """
+    Vworld API 공통 요청 함수.
+    레이어에 따라 DATA API와 WFS API를 자동 분기.
+    """
+    try:
+        if layer in DATA_API_LAYERS:
+            return _data_api_request(api_key, layer, bbox, attr_filter, max_features, timeout)
+        else:
+            return _wfs_api_request(api_key, layer, bbox, cql_filter, max_features, timeout)
+    except Exception as e:
+        logger.warning("Vworld 요청 실패 | layer=%s error=%s", layer, e)
+        return None
 
+
+def _data_api_request(
+    api_key: str,
+    layer: str,
+    bbox: tuple[float, float, float, float] | None = None,
+    attr_filter: str | None = None,
+    max_features: int = 500,
+    timeout: int = 10,
+) -> dict[str, Any] | None:
+    """Vworld 2D 데이터 API — 행정구역·수계도·임야도."""
+    params: dict[str, str] = {
+        "key":      api_key,
+        "service":  "data",
+        "request":  "GetFeature",
+        "data":     layer.upper(),
+        "format":   "json",
+        "size":     str(min(max_features, 1000)),
+        "page":     "1",
+        "geometry": "true",
+        "crs":      "EPSG:4326",
+    }
+
+    if bbox:
+        west, south, east, north = bbox
+        params["bbox"] = f"{west},{south},{east},{north},EPSG:4326"
+
+    if attr_filter:
+        params["attrFilter"] = attr_filter
+
+    try:
+        t0 = time.time()
+        resp = requests.get(VWORLD_DATA_URL, params=params, timeout=timeout)
+        elapsed = time.time() - t0
+        resp.raise_for_status()
+        data = resp.json()
+
+        status = data.get("response", {}).get("status", "")
+        if status != "OK":
+            logger.warning("Vworld DATA API 오류 | layer=%s status=%s", layer, status)
+            return None
+
+        features = (
+            data.get("response", {})
+                .get("result", {})
+                .get("featureCollection", {})
+                .get("features", [])
+        )
+        feat_count = len(features)
+        logger.info("Vworld DATA API | layer=%s features=%d elapsed=%.2fs", layer, feat_count, elapsed)
+
+        if feat_count == 0:
+            return None
+
+        return {"type": "FeatureCollection", "features": features}
+
+    except Exception as e:
+        logger.warning("Vworld DATA API 실패 | layer=%s error=%s", layer, e)
+        return None
+
+
+def _wfs_api_request(
+    api_key: str,
+    layer: str,
+    bbox: tuple[float, float, float, float] | None = None,
+    cql_filter: str | None = None,
+    max_features: int = 500,
+    timeout: int = 10,
+) -> dict[str, Any] | None:
+    """Vworld WFS API — 연속지적도 등 필지 기반."""
     params: dict[str, str] = {
         "key":         api_key,
         "service":     "WFS",
@@ -109,6 +201,7 @@ def _wfs_request(
     }
 
     if bbox:
+        west, south, east, north = bbox
         params["bbox"] = f"{west},{south},{east},{north},EPSG:4326"
 
     if cql_filter:
@@ -121,16 +214,10 @@ def _wfs_request(
         resp.raise_for_status()
         geojson = resp.json()
         feat_count = len(geojson.get("features", []))
-        logger.info(
-            "Vworld WFS | layer=%s features=%d elapsed=%.2fs",
-            layer, feat_count, elapsed,
-        )
+        logger.info("Vworld WFS API | layer=%s features=%d elapsed=%.2fs", layer, feat_count, elapsed)
         return geojson if feat_count > 0 else None
-    except requests.exceptions.Timeout:
-        logger.warning("Vworld WFS 타임아웃 | layer=%s", layer)
-        return None
     except Exception as e:
-        logger.warning("Vworld WFS 실패 | layer=%s error=%s", layer, e)
+        logger.warning("Vworld WFS API 실패 | layer=%s error=%s", layer, e)
         return None
 
 
@@ -144,10 +231,7 @@ def get_vworld_boundary(
     api_key: str,
     max_features: int = 500,
 ) -> dict[str, Any] | None:
-    """
-    bbox 내 공공데이터 폴리곤 반환 (GEE 마스킹용).
-    index_name으로 적절한 레이어를 자동 선택.
-    """
+    """bbox 내 공공데이터 폴리곤 반환 (GEE 마스킹용)."""
     if not api_key:
         return None
 
@@ -156,8 +240,40 @@ def get_vworld_boundary(
         return None
 
     layer, cql_filter = layer_cfg
-    return _wfs_request(api_key, layer, bbox=bbox, cql_filter=cql_filter,
-                        max_features=max_features)
+
+    # DATA API 레이어는 attrFilter 방식, WFS는 CQL_FILTER 방식
+    if layer in DATA_API_LAYERS:
+        # CQL_FILTER를 attrFilter 형식으로 변환
+        # "sigg_nm='중구'" → "sigg_nm:=:중구"
+        attr_filter = _cql_to_attr_filter(cql_filter) if cql_filter else None
+        return _wfs_request(api_key, layer, bbox=bbox, attr_filter=attr_filter,
+                            max_features=max_features)
+    else:
+        return _wfs_request(api_key, layer, bbox=bbox, cql_filter=cql_filter,
+                            max_features=max_features)
+
+
+def _cql_to_attr_filter(cql: str) -> str | None:
+    """
+    CQL 필터를 Vworld DATA API attrFilter 형식으로 변환.
+    "sigg_nm='중구'" → "sigg_nm:=:중구"
+    "river_nm LIKE '%소양%'" → "river_nm:like:소양"
+    """
+    import re
+    if not cql:
+        return None
+
+    # = 연산자
+    m = re.match(r"(\w+)\s*=\s*'([^']+)'", cql)
+    if m:
+        return f"{m.group(1)}:=:{m.group(2)}"
+
+    # LIKE 연산자
+    m = re.match(r"(\w+)\s+LIKE\s+'%([^%]+)%'", cql, re.IGNORECASE)
+    if m:
+        return f"{m.group(1)}:like:{m.group(2)}"
+
+    return None
 
 
 def get_vworld_mask(
@@ -292,20 +408,17 @@ def search_polygon(
     cql_filter = parsed.get("cql_filter")
 
     if not layer:
-        # 키워드 매칭 실패 → 연속지적도 전체 검색
         layer = "lt_c_landinfobasemap"
 
-    logger.info(
-        "Vworld 검색 | query=%s layer=%s filter=%s",
-        query, layer, cql_filter,
-    )
+    logger.info("Vworld 검색 | query=%s layer=%s filter=%s", query, layer, cql_filter)
 
-    return _wfs_request(
-        api_key, layer,
-        bbox=bbox,
-        cql_filter=cql_filter,
-        max_features=max_features,
-    )
+    if layer in DATA_API_LAYERS:
+        attr_filter = _cql_to_attr_filter(cql_filter) if cql_filter else None
+        return _wfs_request(api_key, layer, bbox=bbox, attr_filter=attr_filter,
+                            max_features=max_features)
+    else:
+        return _wfs_request(api_key, layer, bbox=bbox, cql_filter=cql_filter,
+                            max_features=max_features)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
