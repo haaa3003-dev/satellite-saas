@@ -154,12 +154,43 @@ def _get_vworld_geojson(
 
         attr_filter = f"pnu:like:{sig_cd}"
         geojson = _data_api_request(
-            api_key, layer, attr_filter=attr_filter, max_features=400
+            api_key, layer, attr_filter=attr_filter, max_features=1000
         )
         if geojson and geojson.get("features"):
-            feat_count = len(geojson["features"])
-            logger.info("Vworld 연속지적도 OK | %s(%s) features=%d", sigungu, sig_cd, feat_count)
-            return geojson
+            w, s, e, n = bbox
+
+            def _in_bbox(coords: list) -> bool:
+                """좌표 중 하나라도 bbox 안에 있으면 True."""
+                return any(w <= c[0] <= e and s <= c[1] <= n for c in coords)
+
+            filtered = []
+            for feat in geojson["features"]:
+                # 지목 필터
+                jibun = feat.get("properties", {}).get("jibun", "").strip()
+                if not jibun.endswith(("전", "답", "과", "목")):
+                    continue
+                # bbox 교차 필터
+                geom = feat.get("geometry") or {}
+                coords_flat: list = []
+                if geom.get("type") == "Polygon":
+                    for ring in geom.get("coordinates", []):
+                        coords_flat.extend(ring)
+                elif geom.get("type") == "MultiPolygon":
+                    for poly in geom.get("coordinates", []):
+                        for ring in poly:
+                            coords_flat.extend(ring)
+                if coords_flat and _in_bbox(coords_flat):
+                    filtered.append(feat)
+
+            feat_count = len(filtered)
+            logger.info(
+                "Vworld 연속지적도 OK | %s(%s) raw=%d farmland_in_bbox=%d",
+                sigungu, sig_cd, len(geojson["features"]), feat_count,
+            )
+            if feat_count == 0:
+                logger.warning("bbox 내 농경지 필지 없음 — ESA+DW fallback | sigungu=%s", sigungu)
+                return None
+            return {"type": "FeatureCollection", "features": filtered}
         logger.warning("Vworld 연속지적도 없음 | sigungu=%s sig_cd=%s", sigungu, sig_cd)
         return None
 

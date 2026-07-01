@@ -133,6 +133,7 @@ def _clear_preset() -> None:
 
 def _clear_search() -> None:
     st.session_state.search_input = ""
+    st.session_state["_last_processed_search"] = ""  # 새 검색 가능하게
 
 
 # 세션 초기화
@@ -178,8 +179,12 @@ with col_s2:
 # ── 지역 이동 처리 ────────────────────────────────────────────────────────────
 vworld_key = st.secrets.get("vworld_api_key", "")
 
-if st.session_state.search_input:
-    query = st.session_state.search_input.strip()
+# 무한루프 방지: 이미 처리한 검색어와 동일하면 재실행하지 않음
+_last_search = st.session_state.get("_last_processed_search", "")
+_current_search = st.session_state.search_input.strip() if st.session_state.search_input else ""
+
+if _current_search and _current_search != _last_search:
+    query = _current_search
     vworld_result = None
 
     # 1. Vworld 폴리곤 검색 (API 키 있을 때)
@@ -191,7 +196,7 @@ if st.session_state.search_input:
             logger.warning("Vworld 검색 실패 | error=%s", e)
 
     if vworld_result and vworld_result.get("features"):
-        # 폴리곤 bbox 자동 계산
+        # 폴리곤 bbox 자동 계산 (WGS84 기준 좌표 검증)
         coords_list = []
         for feat in vworld_result["features"]:
             geom = feat.get("geometry", {})
@@ -206,13 +211,19 @@ if st.session_state.search_input:
             lons = [c[0] for c in coords_list]
             lats = [c[1] for c in coords_list]
             w, s, e, n = min(lons), min(lats), max(lons), max(lats)
-            st.session_state.map_center = [(s + n) / 2, (w + e) / 2]
-            st.session_state.map_zoom = 12
-            st.session_state.region_name = query
-            st.session_state.search_geojson = vworld_result
-            feat_count = len(vworld_result["features"])
-            st.success(f"✅ '{query}' — 공공데이터 폴리곤 {feat_count}개")
-    else:
+            # WGS84 유효 범위 검증 (한국 범위: 경도 124~132, 위도 33~39)
+            if 124 <= w <= 132 and 33 <= s <= 39:
+                st.session_state.map_center = [(s + n) / 2, (w + e) / 2]
+                st.session_state.map_zoom = 12
+                st.session_state.region_name = query
+                st.session_state.search_geojson = vworld_result
+                feat_count = len(vworld_result["features"])
+                st.success(f"✅ '{query}' — 공공데이터 폴리곤 {feat_count}개")
+            else:
+                logger.warning("잘못된 좌표계 응답 | lon=%s lat=%s — Nominatim fallback", w, s)
+                vworld_result = None  # fallback 처리로 넘김
+
+    if not vworld_result or not vworld_result.get("features"):
         # 2. Vworld 실패 → Nominatim fallback
         st.session_state.search_geojson = None
         try:
@@ -227,6 +238,9 @@ if st.session_state.search_input:
                 st.warning("⚠️ 검색 결과가 없습니다.")
         except NetworkError as exc:
             st.warning(f"⚠️ 지명 검색 중 오류: {exc}")
+
+    # 처리 완료 표시 — 같은 검색어 재실행 방지
+    st.session_state["_last_processed_search"] = query
 
 elif st.session_state.preset_select != "직접 검색":
     preset = st.session_state.preset_select
@@ -458,7 +472,10 @@ if tab_main:
 
     # ── A. 지도 ───────────────────────────────────────────────────────────────
     st.subheader(f"🗺️ {region_name} 위성 지도 ({cfg['index_name']})")
-    m = folium.Map(location=[lat, lon], zoom_start=map_zoom)
+    w, s, e, n = bbox
+    center_lat = (s + n) / 2
+    center_lon = (w + e) / 2
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=map_zoom)
     if res.tile_url:
         folium.TileLayer(
             tiles=res.tile_url,
@@ -468,22 +485,8 @@ if tab_main:
             control=True,
         ).add_to(m)
 
-    # 공공데이터 경계선 오버레이 + fit_bounds
-    if st.session_state.get("search_geojson"):
-        try:
-            from vworld import geojson_to_folium_layer
-            geojson_to_folium_layer(
-                st.session_state.search_geojson,
-                layer_name="공공데이터 경계",
-                color="#2c7fb8",
-                fill_opacity=0.0,
-                weight=2.5,
-            ).add_to(m)
-            # 폴리곤 bbox에 맞게 지도 자동 줌
-            w, s, e, n = bbox
-            m.fit_bounds([[s, w], [n, e]])
-        except Exception as e:
-            logger.warning("결과 지도 폴리곤 오버레이 실패 | error=%s", e)
+    # 항상 분석 bbox로 fit_bounds → 타일이 정확한 범위에 표시됨
+    m.fit_bounds([[s, w], [n, e]])
 
     st_folium(m, width="100%", height=500, returned_objects=[], key="main_map")
 

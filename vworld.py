@@ -204,6 +204,7 @@ def _wfs_api_request(
         "service":     "WFS",
         "request":     "GetFeature",
         "typename":    layer,
+        "srsName":     "EPSG:4326",
         "output":      "application/json",
         "maxFeatures": str(max_features),
         "domain":      "http://localhost:8501",
